@@ -36,9 +36,9 @@ android {
         jvmTarget = '11'
     }
 
-    packagingOptions {
-        jniLibs {
-            useLegacyPackaging = true
+    packaging {
+        resources {
+            excludes += '/META-INF/{AL2.0,LGPL2.1}'
         }
     }
 }
