@@ -9,6 +9,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.logging.HttpLoggingInterceptor
 import java.io.IOException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -50,7 +51,15 @@ object ApiClient {
     private fun getRecordCallUrl() = "$BASE_URL/api/call-record"
     private fun getRecordSmsUrl() = "$BASE_URL/api/sms-record"
 
+    // HTTP 로깅 인터셉터 설정
+    private val loggingInterceptor = HttpLoggingInterceptor { message ->
+        Log.d(TAG, "HTTP: $message")
+    }.apply {
+        level = HttpLoggingInterceptor.Level.BODY
+    }
+
     private val client = OkHttpClient.Builder()
+        .addInterceptor(loggingInterceptor)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
@@ -124,16 +133,32 @@ object ApiClient {
     fun getPhoneNumbers(limit: Int, callback: PhoneNumbersCallback) {
         executorService.execute {
             var phoneNumbers: MutableList<String>? = null
+            var errorMessage: String? = null
+
             try {
-                Log.d(TAG, "URL 설정됨: ${getPhoneNumbersUrl()}")
+                val url = getPhoneNumbersUrl()
+                Log.d(TAG, "========================================")
+                Log.d(TAG, "전화번호 가져오기 시작")
+                Log.d(TAG, "URL: $url")
+                Log.d(TAG, "BASE_URL: $BASE_URL")
+                Log.d(TAG, "Limit: $limit")
+                Log.d(TAG, "========================================")
+
                 val request = Request.Builder()
-                    .url(getPhoneNumbersUrl())
+                    .url(url)
                     .get()
                     .build()
 
+                Log.d(TAG, "요청 전송 중...")
+
                 client.newCall(request).execute().use { response ->
+                    Log.d(TAG, "응답 수신: code=${response.code}, message=${response.message}")
+                    Log.d(TAG, "응답 성공 여부: ${response.isSuccessful}")
+
                     if (response.isSuccessful && response.body != null) {
                         val responseBody = response.body!!.string()
+                        Log.d(TAG, "응답 본문: $responseBody")
+
                         val jsonObject = gson.fromJson(responseBody, JsonObject::class.java)
 
                         phoneNumbers = mutableListOf()
@@ -141,32 +166,56 @@ object ApiClient {
                         // phones 배열이 있는 경우
                         if (jsonObject.has("phones")) {
                             val phoneArray = jsonObject.getAsJsonArray("phones")
+                            Log.d(TAG, "phones 배열 크기: ${phoneArray.size()}")
+
                             for (i in 0 until minOf(phoneArray.size(), limit)) {
                                 val phoneObj = phoneArray[i].asJsonObject
                                 if (phoneObj.has("phone")) {
                                     val phoneNumber = phoneObj.get("phone").asString
                                     if (!phoneNumber.isNullOrEmpty()) {
                                         phoneNumbers!!.add(phoneNumber)
+                                        Log.d(TAG, "전화번호 추가: $phoneNumber")
                                     }
                                 }
                             }
+                        } else {
+                            Log.w(TAG, "응답에 'phones' 배열이 없음")
                         }
 
                         if (phoneNumbers!!.isEmpty()) {
+                            Log.w(TAG, "가져온 전화번호가 없음")
                             phoneNumbers = null
+                        } else {
+                            Log.d(TAG, "총 ${phoneNumbers!!.size}개 전화번호 가져옴")
                         }
+                    } else {
+                        errorMessage = "서버 응답 실패: ${response.code} ${response.message}"
+                        Log.e(TAG, errorMessage!!)
                     }
                 }
             } catch (e: IOException) {
+                errorMessage = "네트워크 오류: ${e.message}"
                 Log.e(TAG, "전화번호 목록 가져오기 실패", e)
+                Log.e(TAG, "오류 타입: ${e.javaClass.simpleName}")
+                Log.e(TAG, "오류 메시지: ${e.message}")
+                e.cause?.let {
+                    Log.e(TAG, "원인: ${it.javaClass.simpleName} - ${it.message}")
+                }
+            } catch (e: Exception) {
+                errorMessage = "예상치 못한 오류: ${e.message}"
+                Log.e(TAG, "예상치 못한 오류 발생", e)
             }
 
             val result = phoneNumbers
+            val error = errorMessage
             mainHandler.post {
                 if (!result.isNullOrEmpty()) {
+                    Log.d(TAG, "콜백 성공: ${result.size}개 전화번호")
                     callback.onSuccess(result)
                 } else {
-                    callback.onFailure("전화번호를 가져올 수 없습니다")
+                    val finalError = error ?: "전화번호를 가져올 수 없습니다"
+                    Log.e(TAG, "콜백 실패: $finalError")
+                    callback.onFailure(finalError)
                 }
             }
         }
