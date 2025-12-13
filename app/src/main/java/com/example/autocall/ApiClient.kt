@@ -144,12 +144,29 @@ object ApiClient {
                 Log.d(TAG, "Limit: $limit")
                 Log.d(TAG, "========================================")
 
+                // 네트워크 연결 진단
+                try {
+                    val urlObj = java.net.URL(url)
+                    val host = urlObj.host
+                    val port = urlObj.port
+                    Log.d(TAG, "연결 테스트: host=$host, port=$port")
+
+                    // 소켓 연결 테스트
+                    val socket = java.net.Socket()
+                    socket.connect(java.net.InetSocketAddress(host, port), 5000)
+                    socket.close()
+                    Log.d(TAG, "직접 소켓 연결 성공!")
+                } catch (e: Exception) {
+                    Log.e(TAG, "직접 소켓 연결 실패: ${e.javaClass.simpleName} - ${e.message}")
+                    e.printStackTrace()
+                }
+
                 val request = Request.Builder()
                     .url(url)
                     .get()
                     .build()
 
-                Log.d(TAG, "요청 전송 중...")
+                Log.d(TAG, "OkHttp 요청 전송 중...")
 
                 client.newCall(request).execute().use { response ->
                     Log.d(TAG, "응답 수신: code=${response.code}, message=${response.message}")
