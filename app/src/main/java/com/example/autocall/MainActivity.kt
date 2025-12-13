@@ -167,11 +167,20 @@ class MainActivity : AppCompatActivity() {
         ) {
             hasAutoStarted = true
 
+            Log.d(TAG, "========================================")
+            Log.d(TAG, "자동 시작 조건 충족 - 1초 후 서버 접속 시작")
+            Log.d(TAG, "서버 주소: ${etServerAddress.text}")
+            Log.d(TAG, "========================================")
+
             // 약간의 지연 후 자동 시작 (UI가 완전히 초기화되도록)
             handler.postDelayed({
-                Toast.makeText(this, "자동으로 작업을 시작합니다...", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "자동으로 서버에 접속하여 작업을 시작합니다...", Toast.LENGTH_LONG).show()
                 startAutoCallProcess()
             }, 1000)
+        } else {
+            Log.w(TAG, "자동 시작 실패: 권한 부족")
+            Log.w(TAG, "CALL_PHONE: ${ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED}")
+            Log.w(TAG, "READ_PHONE_STATE: ${ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED}")
         }
     }
 
@@ -179,6 +188,8 @@ class MainActivity : AppCompatActivity() {
      * 자동 전화 프로세스 시작
      */
     private fun startAutoCallProcess() {
+        Log.d(TAG, "startAutoCallProcess() 호출됨")
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(this, "전화 권한이 필요합니다", Toast.LENGTH_SHORT).show()
             checkAndRequestPermissions()
@@ -187,18 +198,28 @@ class MainActivity : AppCompatActivity() {
 
         // 서버 주소 설정
         val serverAddress = etServerAddress.text.toString().trim()
+        Log.d(TAG, "서버 주소: '$serverAddress'")
+
         if (serverAddress.isEmpty()) {
             Toast.makeText(this, "서버 주소를 입력하세요", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "서버 주소가 비어있음 - 자동 시작 실패")
             return
         }
 
         // API 클라이언트 주소 설정
         ApiClient.setBaseUrl(serverAddress)
+        Log.d(TAG, "ApiClient에 서버 주소 설정 완료")
 
         if (isAutoCalling) {
             Toast.makeText(this, "이미 자동 전화가 진행 중입니다", Toast.LENGTH_SHORT).show()
+            Log.w(TAG, "이미 자동 전화 진행 중")
             return
         }
+
+        Log.d(TAG, "========================================")
+        Log.d(TAG, "자동 전화 프로세스 시작!")
+        Log.d(TAG, "서버: $serverAddress")
+        Log.d(TAG, "========================================")
 
         btnStart.isEnabled = false
         isAutoCalling = true
