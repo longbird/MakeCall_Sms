@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etServerAddress: EditText
     private lateinit var etCallTimeout: EditText
     private lateinit var etCallDuration: EditText
+    private lateinit var etPhoneNumberLimit: EditText
     private lateinit var btnStart: Button
     private lateinit var btnMakeCall: Button
     private lateinit var btnViewHistory: Button
@@ -79,9 +80,10 @@ class MainActivity : AppCompatActivity() {
         etServerAddress = findViewById(R.id.etServerAddress)
         etCallTimeout = findViewById(R.id.etCallTimeout)
         etCallDuration = findViewById(R.id.etCallDuration)
+        etPhoneNumberLimit = findViewById(R.id.etPhoneNumberLimit)
         // 기본 서버 주소 설정
         etServerAddress.setText("192.168.0.210:8080")
-        // 기본 타이머 설정 (이미 XML에서 설정되어 있음)
+        // 기본 타이머 및 전화번호 개수 설정 (이미 XML에서 설정되어 있음)
         btnStart = findViewById(R.id.btnStart)
         btnMakeCall = findViewById(R.id.btnMakeCall)
         btnViewHistory = findViewById(R.id.btnViewHistory)
@@ -242,10 +244,15 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // 전화번호 가져올 개수 설정 읽기
+        val phoneNumberLimit = etPhoneNumberLimit.text.toString().toIntOrNull() ?: 10
+
         Toast.makeText(this, "전화번호를 가져오는 중...", Toast.LENGTH_SHORT).show()
 
-        // REST API로 최대 10개의 전화번호 가져오기
-        ApiClient.getPhoneNumbers(10, object : ApiClient.PhoneNumbersCallback {
+        Log.d(TAG, "서버에서 최대 ${phoneNumberLimit}개의 전화번호 요청")
+
+        // REST API로 설정된 개수만큼 전화번호 가져오기
+        ApiClient.getPhoneNumbers(phoneNumberLimit, object : ApiClient.PhoneNumbersCallback {
             override fun onSuccess(phoneNumbers: List<String>) {
                 runOnUiThread {
                     if (phoneNumbers.isNotEmpty()) {
