@@ -105,28 +105,40 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
-        val phoneNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+        val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
 
         // 발신 전화번호 가져오기 (CallManager에서)
         if (currentPhoneNumber == null) {
             currentPhoneNumber = CallManager.getLastCalledNumber()
         }
 
-        if (state != null && currentPhoneNumber != null) {
-            when (state) {
-                TelephonyManager.EXTRA_STATE_RINGING -> {
-                    // 전화 수신 중 (발신이 아닌 경우)
-                    Log.d(TAG, "전화 수신 중: $phoneNumber")
-                }
-                TelephonyManager.EXTRA_STATE_OFFHOOK -> {
-                    // 통화 중 (전화가 연결됨)
-                    Log.d(TAG, "통화 중 - 전화번호: $currentPhoneNumber")
+        when (state) {
+            TelephonyManager.EXTRA_STATE_RINGING -> {
+                // 전화 수신 중 (발신이 아닌 경우) - 자동으로 거부
+                Log.d(TAG, "========================================")
+                Log.d(TAG, "수신 전화 감지: $incomingNumber")
+                Log.d(TAG, "자동 거부 처리 시작...")
+                Log.d(TAG, "========================================")
+
+                // 수신 전화 자동 거부
+                rejectIncomingCall(context)
+            }
+            TelephonyManager.EXTRA_STATE_OFFHOOK -> {
+                // 통화 중 (전화가 연결됨)
+                if (currentPhoneNumber != null) {
+                    Log.d(TAG, "발신 통화 중 - 전화번호: $currentPhoneNumber")
                     handleCallConnected(context)
+                } else {
+                    Log.d(TAG, "OFFHOOK 상태이지만 발신 전화번호 없음 (수신 전화일 수 있음)")
                 }
-                TelephonyManager.EXTRA_STATE_IDLE -> {
-                    // 통화 종료
-                    Log.d(TAG, "통화 종료")
+            }
+            TelephonyManager.EXTRA_STATE_IDLE -> {
+                // 통화 종료
+                Log.d(TAG, "통화 종료")
+                if (currentPhoneNumber != null) {
                     handleCallEnded(context)
+                } else {
+                    Log.d(TAG, "발신 전화 없음 - 수신 전화 종료됨")
                 }
             }
         }
@@ -300,6 +312,65 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
         // 모든 시도가 실패했을 때의 로그
         Log.w(TAG, "자동 전화 종료 실패. 사용자가 수동으로 종료해야 할 수 있음.")
+    }
+
+    /**
+     * 수신 전화 자동 거부
+     */
+    private fun rejectIncomingCall(context: Context) {
+        try {
+            // Android 9 (API 28) 이상
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                if (telecomManager != null &&
+                    ActivityCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.ANSWER_PHONE_CALLS
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    val success = telecomManager.endCall()
+                    if (success) {
+                        Log.d(TAG, "✓ TelecomManager로 수신 전화 거부 성공")
+                    } else {
+                        Log.w(TAG, "TelecomManager.endCall() 실패 - 기본 전화 앱이 아닐 수 있음")
+                    }
+                    return
+                } else {
+                    Log.w(TAG, "ANSWER_PHONE_CALLS 권한 없음")
+                }
+            }
+
+            // Android 8.1 이하에서 Reflection 시도
+            val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+            if (telephonyManager != null) {
+                try {
+                    // ITelephony 인터페이스를 통한 전화 거부
+                    val telephonyClass = Class.forName(telephonyManager.javaClass.name)
+                    val getITelephonyMethod = telephonyClass.getDeclaredMethod("getITelephony")
+                    getITelephonyMethod.isAccessible = true
+                    val iTelephony = getITelephonyMethod.invoke(telephonyManager)
+
+                    if (iTelephony != null) {
+                        val iTelephonyClass = Class.forName(iTelephony.javaClass.name)
+                        val endCallMethod = iTelephonyClass.getDeclaredMethod("endCall")
+                        endCallMethod.isAccessible = true
+                        endCallMethod.invoke(iTelephony)
+                        Log.d(TAG, "✓ Reflection으로 수신 전화 거부 성공")
+                        return
+                    }
+                } catch (e: NoSuchMethodException) {
+                    Log.w(TAG, "endCall 메서드를 찾을 수 없음: ${e.message}")
+                } catch (e: SecurityException) {
+                    Log.w(TAG, "수신 전화 거부 권한 거부됨: ${e.message}")
+                } catch (e: ClassNotFoundException) {
+                    Log.w(TAG, "ITelephony 클래스를 찾을 수 없음: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "수신 전화 거부 실패: ${e.message}", e)
+        }
+
+        Log.w(TAG, "✗ 수신 전화 자동 거부 실패 - 기본 전화 앱으로 설정하거나 수동으로 거부해야 합니다")
     }
 
     /**
