@@ -154,12 +154,13 @@ class SmsContentObserver(private val context: Context, handler: Handler) : Conte
                             val mType = if (typeIndex >= 0) it.getInt(typeIndex) else 0
 
                             // 중복 방지 및 수신 MMS만 처리 (m_type = 132)
-                            if (id != lastMmsId && date > lastCheckTime && mType == 132) {
+                            if (id != lastMmsId && mType == 132) {
                                 lastMmsId = id
 
                                 Log.d(TAG, "========================================")
                                 Log.d(TAG, "새로운 MMS 감지!")
                                 Log.d(TAG, "ID: $id")
+                                Log.d(TAG, "m_type: $mType")
                                 Log.d(TAG, "수신시간: $date")
                                 Log.d(TAG, "========================================")
 
@@ -205,25 +206,46 @@ class SmsContentObserver(private val context: Context, handler: Handler) : Conte
             val uri = Uri.parse("content://mms/$mmsId/addr")
             val cursor = context.contentResolver.query(
                 uri,
-                arrayOf("address", "type"),
+                arrayOf("address", "type", "charset"),
                 null,
                 null,
                 null
             )
 
             cursor?.use {
+                Log.d(TAG, "MMS address 조회 - 레코드 수: ${it.count}")
+                var fromAddress: String? = null
+
                 while (it.moveToNext()) {
                     val addressIndex = it.getColumnIndex("address")
                     val typeIndex = it.getColumnIndex("type")
 
                     if (addressIndex >= 0 && typeIndex >= 0) {
+                        val address = it.getString(addressIndex)
                         val type = it.getInt(typeIndex)
+
+                        Log.d(TAG, "MMS address - type: $type, address: $address")
+
                         // type 137 = 발신자 (FROM)
-                        if (type == 137) {
-                            return it.getString(addressIndex)
+                        // type 151 = 발신자 (일부 기기)
+                        // type 129 = 발신자 (일부 통신사)
+                        if (type == 137 || type == 151 || type == 129) {
+                            fromAddress = address
+                            Log.d(TAG, "발신자 address 발견: type=$type, address=$address")
                         }
                     }
                 }
+
+                // 발신자 타입을 찾지 못했으면 첫 번째 주소 사용
+                if (fromAddress == null && it.moveToFirst()) {
+                    val addressIndex = it.getColumnIndex("address")
+                    if (addressIndex >= 0) {
+                        fromAddress = it.getString(addressIndex)
+                        Log.d(TAG, "발신자 타입 없음, 첫 번째 주소 사용: $fromAddress")
+                    }
+                }
+
+                return fromAddress
             }
         } catch (e: Exception) {
             Log.e(TAG, "MMS 발신번호 조회 오류: ${e.message}", e)
@@ -246,35 +268,50 @@ class SmsContentObserver(private val context: Context, handler: Handler) : Conte
             )
 
             cursor?.use {
+                Log.d(TAG, "MMS part 조회 - 레코드 수: ${it.count}")
+
                 while (it.moveToNext()) {
+                    val idIndex = it.getColumnIndex("_id")
                     val ctIndex = it.getColumnIndex("ct")
                     val textIndex = it.getColumnIndex("text")
                     val dataIndex = it.getColumnIndex("_data")
 
                     if (ctIndex >= 0) {
+                        val partId = if (idIndex >= 0) it.getLong(idIndex) else -1
                         val contentType = it.getString(ctIndex)
+                        val text = if (textIndex >= 0) it.getString(textIndex) else null
+                        val data = if (dataIndex >= 0) it.getString(dataIndex) else null
+
+                        Log.d(TAG, "MMS part - id: $partId, ct: $contentType, text: ${text?.take(50)}, data: $data")
 
                         // text/plain 타입의 part에서 텍스트 추출
                         if (contentType == "text/plain") {
-                            if (textIndex >= 0) {
-                                val text = it.getString(textIndex)
-                                if (!text.isNullOrEmpty()) {
-                                    return text
-                                }
+                            if (!text.isNullOrEmpty()) {
+                                Log.d(TAG, "MMS 텍스트 발견 (text 컬럼): $text")
+                                return text
                             }
 
                             // text가 null이면 _data를 사용하여 파일에서 읽기
-                            if (dataIndex >= 0) {
-                                val data = it.getString(dataIndex)
-                                if (!data.isNullOrEmpty()) {
-                                    val partId = it.getLong(it.getColumnIndex("_id"))
-                                    return readMmsPartText(partId)
+                            if (!data.isNullOrEmpty()) {
+                                val partText = readMmsPartText(partId)
+                                if (!partText.isNullOrEmpty()) {
+                                    Log.d(TAG, "MMS 텍스트 발견 (part 읽기): $partText")
+                                    return partText
                                 }
+                            }
+
+                            // 마지막 시도: part URI로 직접 읽기
+                            val partText = readMmsPartText(partId)
+                            if (!partText.isNullOrEmpty()) {
+                                Log.d(TAG, "MMS 텍스트 발견 (직접 읽기): $partText")
+                                return partText
                             }
                         }
                     }
                 }
             }
+
+            Log.w(TAG, "MMS에서 텍스트를 찾을 수 없음")
         } catch (e: Exception) {
             Log.e(TAG, "MMS 텍스트 조회 오류: ${e.message}", e)
         }
@@ -285,14 +322,25 @@ class SmsContentObserver(private val context: Context, handler: Handler) : Conte
      * MMS part에서 텍스트 읽기
      */
     private fun readMmsPartText(partId: Long): String? {
+        if (partId <= 0) {
+            Log.w(TAG, "유효하지 않은 part ID: $partId")
+            return null
+        }
+
         try {
             val partUri = Uri.parse("content://mms/part/$partId")
+            Log.d(TAG, "MMS part URI로 텍스트 읽기 시도: $partUri")
+
             val inputStream = context.contentResolver.openInputStream(partUri)
             inputStream?.use {
-                return it.bufferedReader().use { reader -> reader.readText() }
+                val text = it.bufferedReader().use { reader -> reader.readText() }
+                Log.d(TAG, "MMS part에서 텍스트 읽기 성공: ${text?.take(100)}")
+                return text
             }
+
+            Log.w(TAG, "MMS part InputStream이 null")
         } catch (e: Exception) {
-            Log.e(TAG, "MMS part 텍스트 읽기 오류: ${e.message}", e)
+            Log.e(TAG, "MMS part 텍스트 읽기 오류 (partId=$partId): ${e.message}", e)
         }
         return null
     }
