@@ -408,7 +408,7 @@ class MainActivity : AppCompatActivity() {
             override fun onFailure(error: String) {
                 runOnUiThread {
                     // 오류 발생 시에도 작업 종료
-                    updateStatus("오류 발생", totalPhoneNumbersProcessed, currentBatchSize)
+                    updateStatus(error, totalPhoneNumbersProcessed, currentBatchSize)
                     Toast.makeText(
                         this@MainActivity,
                         "오류: $error - 작업을 종료합니다.",
