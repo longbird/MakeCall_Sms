@@ -31,8 +31,7 @@ class PhoneStateReceiver : BroadcastReceiver() {
         // 타이머 설정 (동적으로 변경 가능)
         private var noAnswerTimeout = 30000L // 30초 (연결 대기 시간) - 기본값
         private var connectedDisconnectDelay = 20000L // 20초 (통화 연결 후 자동 종료) - 기본값
-        private const val CONNECTION_CHECK_DELAY = 18000L // 18초 (실제 통화 연결 판단 시간 - 통신사 안내 멘트 약 15초)
-        private const val MIN_CALL_DURATION = 5000L // 5초 (실제 통화와 통신사 안내 구분 기준)
+        private const val CONNECTION_CHECK_DELAY = 18000L // 18초 (실제 통화 연결 판단 시간)
 
         private var callEndedListener: OnCallEndedListener? = null
 
@@ -244,24 +243,16 @@ class PhoneStateReceiver : BroadcastReceiver() {
                 Log.d(TAG, "통화 시간: ${callDuration}ms")
                 Log.d(TAG, "========================================")
 
-                when {
-                    connectedTime > 0 -> {
-                        // 18초 후 명시적 연결 확인됨
-                        val connectedDuration = now - connectedTime
-                        ApiClient.recordCall(number, "ended")
-                        Log.d(TAG, "✓ 정상 통화 종료: $number (연결 시간: ${connectedDuration}ms)")
-                    }
-                    callDuration < MIN_CALL_DURATION -> {
-                        // 5초 미만 = 통신사 안내 또는 연결 실패
-                        ApiClient.recordCall(number, "invalid_number")
-                        Log.d(TAG, "✗ 없는 번호/통신사 안내: $number (${callDuration}ms)")
-                    }
-                    else -> {
-                        // 5초 이상 = 실제 연결됨 (상대방이 받았지만 일찍 끊음)
-                        ApiClient.recordCall(number, "ended")
-                        Log.d(TAG, "✓ 통화 종료 (일찍 끊김): $number (${callDuration}ms)")
-                    }
+                // OFFHOOK 도달했으면 모두 연결된 것으로 간주
+                if (connectedTime > 0) {
+                    // 18초 후 명시적 연결 확인됨
+                    val connectedDuration = now - connectedTime
+                    Log.d(TAG, "✓ 정상 통화 종료: $number (연결 시간: ${connectedDuration}ms)")
+                } else {
+                    // 18초 전에 종료됨
+                    Log.d(TAG, "✓ 통화 종료: $number (${callDuration}ms)")
                 }
+                ApiClient.recordCall(number, "ended")
             } else {
                 // OFFHOOK에 도달하지 못했으면 전화 받지 않음
                 ApiClient.recordCall(number, "rejected")

@@ -68,8 +68,7 @@ AutoCallSmsApp은 자동으로 전화를 걸고 SMS 응답을 기록하는 안�
   - `started`: 전화 걸기 시작
   - `dialing`: OFFHOOK 상태 (다이얼링 시작)
   - `connected`: 실제 통화 연결됨 (18초 이상 지속, 명시적 확인)
-  - `ended`: 정상 통화 종료 (연결 후 끊김, 5초 이상 통화)
-  - `invalid_number`: 없는 번호/통신사 안내 (5초 미만)
+  - `ended`: 통화 종료 (OFFHOOK 도달 후 종료)
   - `rejected`: 전화 받지 않음 (OFFHOOK 도달 실패, 30초 타임아웃)
   - `failed`: 전화 걸기 실패
 - `ApiClient`를 통해 서버에 통화 상태 기록
@@ -86,7 +85,7 @@ AutoCallSmsApp은 자동으로 전화를 걸고 SMS 응답을 기록하는 안�
 - Base URL은 사용자 입력을 통해 `setBaseUrl()`로 설정 가능
 - 주요 엔드포인트:
   - `GET /api/phone-numbers` - 전화번호 가져오기 (`phones` 배열이 포함된 JSON 반환)
-  - `POST /api/call-record` - 통화 상태 기록 (started, dialing, connected, ended, invalid_number, rejected, failed)
+  - `POST /api/call-record` - 통화 상태 기록 (started, dialing, connected, ended, rejected, failed)
   - `POST /api/sms-record` - 수신 SMS 기록
   - `POST /api/reset-number` - 전화번호 리셋 (종료 시간 도달 시)
 - 백그라운드 작업용 ExecutorService, 메인 스레드 콜백용 Handler 사용
