@@ -243,9 +243,11 @@ object ApiClient {
      * 전화 기록 전송
      *
      * @param phoneNumber 전화번호
-     * @param status      상태 (started: 전화 걸기 시작, dialing: 다이얼링 시작,
-     *                    connected: 통화 연결됨 (18초 이상), ended: 통화 종료 (18초 이상 후),
-     *                    rejected: 전화 연결 안 됨 (18초 전 종료), failed: 전화 걸기 실패)
+     * @param status      상태 (started: 전화 걸기 시작,
+     *                    connected: 통화 연결됨 (OFFHOOK 상태 도달),
+     *                    ended: 통화 종료 (OFFHOOK 도달 후 종료),
+     *                    rejected: 전화 연결 안 됨 (OFFHOOK 미도달),
+     *                    failed: 전화 걸기 실패)
      */
     fun recordCall(phoneNumber: String, status: String) {
         executorService.execute {

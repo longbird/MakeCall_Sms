@@ -26,12 +26,10 @@ class PhoneStateReceiver : BroadcastReceiver() {
         private var isCallConnected = false
         private var disconnectRunnable: Runnable? = null
         private var noAnswerRunnable: Runnable? = null
-        private var connectionCheckRunnable: Runnable? = null
 
         // 타이머 설정 (동적으로 변경 가능)
         private var noAnswerTimeout = 30000L // 30초 (연결 대기 시간) - 기본값
         private var connectedDisconnectDelay = 20000L // 20초 (통화 연결 후 자동 종료) - 기본값
-        private const val CONNECTION_CHECK_DELAY = 18000L // 18초 (실제 통화 연결 판단 시간)
 
         private var callEndedListener: OnCallEndedListener? = null
 
@@ -100,10 +98,6 @@ class PhoneStateReceiver : BroadcastReceiver() {
                 handler.removeCallbacks(it)
                 noAnswerRunnable = null
             }
-            connectionCheckRunnable?.let {
-                handler.removeCallbacks(it)
-                connectionCheckRunnable = null
-            }
             callEndedListener = null
             currentPhoneNumber = null
             isCallConnected = false
@@ -156,7 +150,7 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
     /**
      * 전화 연결 처리 (OFFHOOK 상태)
-     * 주의: OFFHOOK은 다이얼링 시작 시점이며, 실제 통화 연결 시점이 아님
+     * OFFHOOK 상태 도달 = 통화 연결로 간주
      */
     private fun handleCallConnected(context: Context) {
         if (offhookTime > 0) {
@@ -171,41 +165,27 @@ class PhoneStateReceiver : BroadcastReceiver() {
             noAnswerRunnable = null
         }
 
-        // OFFHOOK 상태 기록 (다이얼링 시작)
+        // OFFHOOK 상태 = 통화 연결됨
+        connectedTime = System.currentTimeMillis()
+        isCallConnected = true
+
         currentPhoneNumber?.let {
-            ApiClient.recordCall(it, "dialing")
+            ApiClient.recordCall(it, "connected")
         }
+
+        Log.d(TAG, "OFFHOOK 상태 (통화 연결됨): $currentPhoneNumber")
 
         // Context의 약한 참조 저장 (메모리 누수 방지)
         val contextRef = WeakReference(context)
 
-        // 12초 후 실제 통화 연결 확인 (통신사 안내 멘트 제외)
-        connectionCheckRunnable = Runnable {
-            if (offhookTime > 0 && connectedTime == 0L && currentPhoneNumber != null) {
-                // 12초 후에도 아직 OFFHOOK 상태 = 실제 통화 연결됨
-                connectedTime = System.currentTimeMillis()
-                isCallConnected = true
-                ApiClient.recordCall(currentPhoneNumber!!, "connected")
-                Log.d(TAG, "========================================")
-                Log.d(TAG, "✓ 실제 통화 연결 확인: $currentPhoneNumber")
-                Log.d(TAG, "다이얼링 시작 후 ${connectedTime - offhookTime}ms 경과")
-                Log.d(TAG, "연결 확인 후 ${connectedDisconnectDelay/1000}초 대기 후 종료")
-                Log.d(TAG, "========================================")
-
-                // 연결 확인 후 설정된 시간만큼 대기 후 전화 끊기
-                disconnectRunnable = Runnable {
-                    contextRef.get()?.let { ctx ->
-                        Log.d(TAG, "${connectedDisconnectDelay/1000}초 경과, 전화 종료 시도: $currentPhoneNumber")
-                        disconnectCall(ctx)
-                    }
-                }
-                handler.postDelayed(disconnectRunnable!!, connectedDisconnectDelay)
+        // 설정된 시간 후 자동으로 전화 끊기
+        disconnectRunnable = Runnable {
+            contextRef.get()?.let { ctx ->
+                Log.d(TAG, "${connectedDisconnectDelay/1000}초 경과, 전화 종료 시도: $currentPhoneNumber")
+                disconnectCall(ctx)
             }
         }
-        handler.postDelayed(connectionCheckRunnable!!, CONNECTION_CHECK_DELAY)
-
-        Log.d(TAG, "OFFHOOK 상태 (다이얼링 시작): $currentPhoneNumber")
-        Log.d(TAG, "18초 후 통화 연결 확인 예정 (통신사 안내 멘트 약 15초)")
+        handler.postDelayed(disconnectRunnable!!, connectedDisconnectDelay)
     }
 
     /**
@@ -223,36 +203,23 @@ class PhoneStateReceiver : BroadcastReceiver() {
             noAnswerRunnable = null
         }
 
-        connectionCheckRunnable?.let {
-            handler.removeCallbacks(it)
-            connectionCheckRunnable = null
-        }
-
-        // 통화 종료 상태 기록 - 세분화된 상태 판단
+        // 통화 종료 상태 기록
         currentPhoneNumber?.let { number ->
             val now = System.currentTimeMillis()
 
             if (offhookTime > 0) {
-                // OFFHOOK 상태까지 도달함
+                // OFFHOOK 상태 도달 = 통화 연결됨
                 val callDuration = now - offhookTime
 
                 Log.d(TAG, "========================================")
                 Log.d(TAG, "통화 종료 분석: $number")
                 Log.d(TAG, "OFFHOOK 도달: ${offhookTime > 0}")
-                Log.d(TAG, "통화 연결: ${connectedTime > 0}")
                 Log.d(TAG, "통화 시간: ${callDuration}ms")
                 Log.d(TAG, "========================================")
 
-                if (connectedTime > 0) {
-                    // 18초 후 명시적 연결 확인됨 = 실제 통화 연결
-                    val connectedDuration = now - connectedTime
-                    ApiClient.recordCall(number, "ended")
-                    Log.d(TAG, "✓ 정상 통화 종료: $number (연결 시간: ${connectedDuration}ms)")
-                } else {
-                    // 18초 전에 종료됨 = 연결 안 됨
-                    ApiClient.recordCall(number, "rejected")
-                    Log.d(TAG, "✗ 전화 연결 안 됨: $number (${callDuration}ms)")
-                }
+                // OFFHOOK 도달 시 connected가 기록되었으므로 ended로 종료
+                ApiClient.recordCall(number, "ended")
+                Log.d(TAG, "✓ 정상 통화 종료: $number (통화 시간: ${callDuration}ms)")
             } else {
                 // OFFHOOK에 도달하지 못했으면 전화 받지 않음
                 ApiClient.recordCall(number, "rejected")
