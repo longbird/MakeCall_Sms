@@ -68,8 +68,8 @@ AutoCallSmsApp은 자동으로 전화를 걸고 SMS 응답을 기록하는 안�
   - `started`: 전화 걸기 시작
   - `dialing`: OFFHOOK 상태 (다이얼링 시작)
   - `connected`: 실제 통화 연결됨 (18초 이상 지속, 명시적 확인)
-  - `ended`: 통화 종료 (OFFHOOK 도달 후 종료)
-  - `rejected`: 전화 받지 않음 (OFFHOOK 도달 실패, 30초 타임아웃)
+  - `ended`: 통화 종료 (connected 상태 도달 후 종료)
+  - `rejected`: 전화 연결 안 됨 (18초 전 종료 또는 OFFHOOK 미도달)
   - `failed`: 전화 걸기 실패
 - `ApiClient`를 통해 서버에 통화 상태 기록
 - **중요**: 자동 거부/끊기는 `ANSWER_PHONE_CALLS` 권한이 필요하며, Android 9+ 에서는 기본 전화 앱이 아니면 작동하지 않을 수 있음

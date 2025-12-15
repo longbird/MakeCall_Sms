@@ -243,16 +243,16 @@ class PhoneStateReceiver : BroadcastReceiver() {
                 Log.d(TAG, "통화 시간: ${callDuration}ms")
                 Log.d(TAG, "========================================")
 
-                // OFFHOOK 도달했으면 모두 연결된 것으로 간주
                 if (connectedTime > 0) {
-                    // 18초 후 명시적 연결 확인됨
+                    // 18초 후 명시적 연결 확인됨 = 실제 통화 연결
                     val connectedDuration = now - connectedTime
+                    ApiClient.recordCall(number, "ended")
                     Log.d(TAG, "✓ 정상 통화 종료: $number (연결 시간: ${connectedDuration}ms)")
                 } else {
-                    // 18초 전에 종료됨
-                    Log.d(TAG, "✓ 통화 종료: $number (${callDuration}ms)")
+                    // 18초 전에 종료됨 = 연결 안 됨
+                    ApiClient.recordCall(number, "rejected")
+                    Log.d(TAG, "✗ 전화 연결 안 됨: $number (${callDuration}ms)")
                 }
-                ApiClient.recordCall(number, "ended")
             } else {
                 // OFFHOOK에 도달하지 못했으면 전화 받지 않음
                 ApiClient.recordCall(number, "rejected")
