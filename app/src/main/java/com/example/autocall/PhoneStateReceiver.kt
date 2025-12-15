@@ -28,13 +28,24 @@ class PhoneStateReceiver : BroadcastReceiver() {
         private var noAnswerRunnable: Runnable? = null
         private var connectionCheckRunnable: Runnable? = null
 
-        // 타이머 설정
-        private const val CONNECTED_DISCONNECT_DELAY = 20000L // 20초 (통화 연결 후 자동 종료)
-        private const val NO_ANSWER_TIMEOUT = 30000L // 30초 (연결 대기 시간)
+        // 타이머 설정 (동적으로 변경 가능)
+        private var noAnswerTimeout = 30000L // 30초 (연결 대기 시간) - 기본값
+        private var connectedDisconnectDelay = 20000L // 20초 (통화 연결 후 자동 종료) - 기본값
         private const val CONNECTION_CHECK_DELAY = 5000L // 5초 (실제 통화 연결 판단 시간)
         private const val INVALID_NUMBER_THRESHOLD = 5000L // 5초 이내 종료 시 없는 번호로 판단
 
         private var callEndedListener: OnCallEndedListener? = null
+
+        /**
+         * 통화 타이머 설정
+         * @param timeoutSeconds 전화 시도 시간(초)
+         * @param durationSeconds 연결 후 대기 시간(초)
+         */
+        fun setCallTimeouts(timeoutSeconds: Int, durationSeconds: Int) {
+            noAnswerTimeout = timeoutSeconds * 1000L
+            connectedDisconnectDelay = durationSeconds * 1000L
+            Log.d(TAG, "타이머 설정 업데이트: 시도=${timeoutSeconds}초, 대기=${durationSeconds}초")
+        }
 
         /**
          * 전화 종료 시 호출될 리스너 인터페이스
@@ -69,13 +80,13 @@ class PhoneStateReceiver : BroadcastReceiver() {
                 if (offhookTime == 0L && currentPhoneNumber != null) {
                     // OFFHOOK 상태에 도달하지 못함 = 연결 실패
                     ApiClient.recordCall(currentPhoneNumber!!, "no_answer")
-                    Log.d(TAG, "30초 이내 OFFHOOK 도달 실패 (연결 안 됨): $currentPhoneNumber")
+                    Log.d(TAG, "${noAnswerTimeout/1000}초 이내 OFFHOOK 도달 실패 (연결 안 됨): $currentPhoneNumber")
 
                     // 다음 전화로 진행
                     callEndedListener?.onCallEnded()
                 }
             }
-            handler.postDelayed(noAnswerRunnable!!, NO_ANSWER_TIMEOUT)
+            handler.postDelayed(noAnswerRunnable!!, noAnswerTimeout)
         }
 
         /**
@@ -184,17 +195,17 @@ class PhoneStateReceiver : BroadcastReceiver() {
         }
         handler.postDelayed(connectionCheckRunnable!!, CONNECTION_CHECK_DELAY)
 
-        // 20초 후 자동으로 전화 끊기 (다이얼링 + 통화 시간 포함)
+        // 설정된 시간 후 자동으로 전화 끊기 (다이얼링 + 통화 시간 포함)
         disconnectRunnable = Runnable {
             contextRef.get()?.let { ctx ->
-                Log.d(TAG, "20초 경과, 전화 종료 시도: $currentPhoneNumber")
+                Log.d(TAG, "${connectedDisconnectDelay/1000}초 경과, 전화 종료 시도: $currentPhoneNumber")
                 disconnectCall(ctx)
             }
         }
-        handler.postDelayed(disconnectRunnable!!, CONNECTED_DISCONNECT_DELAY)
+        handler.postDelayed(disconnectRunnable!!, connectedDisconnectDelay)
 
         Log.d(TAG, "OFFHOOK 상태 (다이얼링 시작): $currentPhoneNumber")
-        Log.d(TAG, "5초 후 통화 연결 확인, 20초 후 자동 종료 예정")
+        Log.d(TAG, "5초 후 통화 연결 확인, ${connectedDisconnectDelay/1000}초 후 자동 종료 예정")
     }
 
     /**

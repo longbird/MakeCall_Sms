@@ -33,6 +33,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var etPhoneNumber: EditText
     private lateinit var etServerAddress: EditText
+    private lateinit var etCallTimeout: EditText
+    private lateinit var etCallDuration: EditText
     private lateinit var btnStart: Button
     private lateinit var btnMakeCall: Button
     private lateinit var btnViewHistory: Button
@@ -75,8 +77,11 @@ class MainActivity : AppCompatActivity() {
         // UI 컴포넌트 초기화
         etPhoneNumber = findViewById(R.id.etPhoneNumber)
         etServerAddress = findViewById(R.id.etServerAddress)
+        etCallTimeout = findViewById(R.id.etCallTimeout)
+        etCallDuration = findViewById(R.id.etCallDuration)
         // 기본 서버 주소 설정
         etServerAddress.setText("192.168.0.210:8080")
+        // 기본 타이머 설정 (이미 XML에서 설정되어 있음)
         btnStart = findViewById(R.id.btnStart)
         btnMakeCall = findViewById(R.id.btnMakeCall)
         btnViewHistory = findViewById(R.id.btnViewHistory)
@@ -367,11 +372,22 @@ class MainActivity : AppCompatActivity() {
     private fun makePhoneCall(phoneNumber: String) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
 
+            // 타이머 설정값 읽기
+            val callTimeout = etCallTimeout.text.toString().toIntOrNull() ?: 30
+            val callDuration = etCallDuration.text.toString().toIntOrNull() ?: 20
+
+            Log.d(TAG, "========================================")
+            Log.d(TAG, "전화 걸기 설정:")
+            Log.d(TAG, "전화 시도 시간: ${callTimeout}초")
+            Log.d(TAG, "연결 후 대기: ${callDuration}초")
+            Log.d(TAG, "========================================")
+
             // 전화번호 저장 (전화를 걸었다는 기록)
             CallManager.setLastCalledNumber(phoneNumber)
 
-            // PhoneStateReceiver에 전화번호 설정
+            // PhoneStateReceiver에 전화번호 및 타이머 설정
             PhoneStateReceiver.setCurrentPhoneNumber(phoneNumber)
+            PhoneStateReceiver.setCallTimeouts(callTimeout, callDuration)
 
             // 전화 걸기 시작 상태 기록
             ApiClient.recordCall(phoneNumber, "started")
