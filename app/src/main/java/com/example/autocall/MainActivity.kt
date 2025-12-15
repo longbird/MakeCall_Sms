@@ -807,7 +807,7 @@ class MainActivity : AppCompatActivity() {
 
             if (!phoneNumber.isNullOrEmpty()) {
                 tvCurrentNumber.visibility = android.view.View.VISIBLE
-                tvCurrentNumber.text = "현재: $phoneNumber"
+                tvCurrentNumber.text = phoneNumber
             } else {
                 tvCurrentNumber.visibility = android.view.View.GONE
             }
