@@ -32,7 +32,7 @@ class PhoneStateReceiver : BroadcastReceiver() {
         private var noAnswerTimeout = 30000L // 30초 (연결 대기 시간) - 기본값
         private var connectedDisconnectDelay = 20000L // 20초 (통화 연결 후 자동 종료) - 기본값
         private const val CONNECTION_CHECK_DELAY = 18000L // 18초 (실제 통화 연결 판단 시간 - 통신사 안내 멘트 약 15초)
-        private const val INVALID_NUMBER_THRESHOLD = 18000L // 18초 이내 종료 시 없는 번호로 판단 (통신사 안내 멘트 약 15초)
+        private const val MIN_CALL_DURATION = 5000L // 5초 (실제 통화와 통신사 안내 구분 기준)
 
         private var callEndedListener: OnCallEndedListener? = null
 
@@ -78,9 +78,9 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
             noAnswerRunnable = Runnable {
                 if (offhookTime == 0L && currentPhoneNumber != null) {
-                    // OFFHOOK 상태에 도달하지 못함 = 연결 실패
-                    ApiClient.recordCall(currentPhoneNumber!!, "no_answer")
-                    Log.d(TAG, "${noAnswerTimeout/1000}초 이내 OFFHOOK 도달 실패 (연결 안 됨): $currentPhoneNumber")
+                    // OFFHOOK 상태에 도달하지 못함 = 전화 받지 않음
+                    ApiClient.recordCall(currentPhoneNumber!!, "rejected")
+                    Log.d(TAG, "${noAnswerTimeout/1000}초 이내 OFFHOOK 도달 실패 (전화 받지 않음): $currentPhoneNumber")
 
                     // 다음 전화로 진행
                     callEndedListener?.onCallEnded()
@@ -246,26 +246,26 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
                 when {
                     connectedTime > 0 -> {
-                        // 실제 통화 연결되었음 (12초 이상 지속)
+                        // 18초 후 명시적 연결 확인됨
                         val connectedDuration = now - connectedTime
                         ApiClient.recordCall(number, "ended")
                         Log.d(TAG, "✓ 정상 통화 종료: $number (연결 시간: ${connectedDuration}ms)")
                     }
-                    callDuration < INVALID_NUMBER_THRESHOLD -> {
-                        // 18초 이내 종료 = 없는 번호 또는 거부 (통신사 안내 멘트 약 15초)
+                    callDuration < MIN_CALL_DURATION -> {
+                        // 5초 미만 = 통신사 안내 또는 연결 실패
                         ApiClient.recordCall(number, "invalid_number")
                         Log.d(TAG, "✗ 없는 번호/통신사 안내: $number (${callDuration}ms)")
                     }
                     else -> {
-                        // 18초 이상 지속되었지만 연결 확인 안됨 = 통화 중 등
-                        ApiClient.recordCall(number, "busy")
-                        Log.d(TAG, "○ 통화 중/기타: $number (${callDuration}ms)")
+                        // 5초 이상 = 실제 연결됨 (상대방이 받았지만 일찍 끊음)
+                        ApiClient.recordCall(number, "ended")
+                        Log.d(TAG, "✓ 통화 종료 (일찍 끊김): $number (${callDuration}ms)")
                     }
                 }
             } else {
-                // OFFHOOK에 도달하지 못했으면 연결 실패
-                ApiClient.recordCall(number, "no_answer")
-                Log.d(TAG, "✗ 연결 안됨: $number (OFFHOOK 도달 실패)")
+                // OFFHOOK에 도달하지 못했으면 전화 받지 않음
+                ApiClient.recordCall(number, "rejected")
+                Log.d(TAG, "✗ 전화 받지 않음: $number (OFFHOOK 도달 실패)")
             }
         }
 
