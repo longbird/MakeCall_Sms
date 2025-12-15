@@ -594,13 +594,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         info.append("테스트 방법:\n")
-        info.append("1. 다른 기기에서 이 기기로 SMS 전송\n")
+        info.append("1. 다른 기기에서 이 기기로 SMS/MMS 전송\n")
         info.append("2. logcat 확인:\n")
         info.append("   adb logcat -s SmsReceiver:D SmsContentObserver:D\n")
-        info.append("3. 'SMS 수신 성공!' 또는 '새로운 SMS 감지!' 메시지 확인\n\n")
-        info.append("이 앱은 두 가지 방식으로 SMS를 수신합니다:\n")
-        info.append("- BroadcastReceiver (Android 표준)\n")
-        info.append("- ContentObserver (차단 시 대체 방법)\n")
+        info.append("3. 'SMS 수신 성공!' 또는 '새로운 SMS/MMS 감지!' 메시지 확인\n\n")
+        info.append("이 앱은 두 가지 방식으로 SMS/MMS를 수신합니다:\n")
+        info.append("- BroadcastReceiver (Android 표준, SMS만)\n")
+        info.append("- ContentObserver (SMS/MMS 모두 지원)\n")
 
         AlertDialog.Builder(this)
             .setTitle("SMS 수신 테스트")
@@ -692,33 +692,38 @@ class MainActivity : AppCompatActivity() {
                     val smsUri = Uri.parse("content://sms/inbox")
                     contentResolver.registerContentObserver(smsUri, true, smsContentObserver!!)
 
+                    // MMS inbox URI 모니터링
+                    val mmsUri = Uri.parse("content://mms/inbox")
+                    contentResolver.registerContentObserver(mmsUri, true, smsContentObserver!!)
+
                     isObserverRegistered = true
                     Log.d(TAG, "========================================")
-                    Log.d(TAG, "SMS ContentObserver 등록 완료!")
-                    Log.d(TAG, "URI: content://sms/inbox")
+                    Log.d(TAG, "SMS/MMS ContentObserver 등록 완료!")
+                    Log.d(TAG, "SMS URI: content://sms/inbox")
+                    Log.d(TAG, "MMS URI: content://mms/inbox")
                     Log.d(TAG, "========================================")
-                    Toast.makeText(this, "SMS 모니터링 시작 (ContentObserver)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "SMS/MMS 모니터링 시작 (ContentObserver)", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
                     Log.e(TAG, "ContentObserver 등록 실패: ${e.message}", e)
-                    Toast.makeText(this, "SMS 모니터링 실패: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "SMS/MMS 모니터링 실패: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             } else {
                 Log.w(TAG, "READ_SMS 권한이 없어서 ContentObserver를 등록할 수 없습니다")
             }
         } else {
-            Log.d(TAG, "SMS ContentObserver 이미 등록됨")
+            Log.d(TAG, "SMS/MMS ContentObserver 이미 등록됨")
         }
     }
 
     /**
-     * SMS ContentObserver 등록 해제
+     * SMS/MMS ContentObserver 등록 해제
      */
     private fun unregisterSmsContentObserver() {
         if (isObserverRegistered && smsContentObserver != null) {
             try {
                 contentResolver.unregisterContentObserver(smsContentObserver!!)
                 isObserverRegistered = false
-                Log.d(TAG, "SMS ContentObserver 등록 해제됨")
+                Log.d(TAG, "SMS/MMS ContentObserver 등록 해제됨")
             } catch (e: Exception) {
                 Log.e(TAG, "ContentObserver 등록 해제 실패: ${e.message}", e)
             }
@@ -733,7 +738,7 @@ class MainActivity : AppCompatActivity() {
         PhoneStateReceiver.cleanup()
         // ApiClient ExecutorService 종료
         ApiClient.shutdown()
-        // SMS ContentObserver 등록 해제
+        // SMS/MMS ContentObserver 등록 해제
         unregisterSmsContentObserver()
         // SMS 수신 BroadcastReceiver 등록 해제
         try {
