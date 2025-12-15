@@ -50,6 +50,7 @@ object ApiClient {
     private fun getPhoneNumbersUrl() = "$BASE_URL/api/phone-numbers"
     private fun getRecordCallUrl() = "$BASE_URL/api/call-record"
     private fun getRecordSmsUrl() = "$BASE_URL/api/sms-record"
+    private fun getResetNumberUrl() = "$BASE_URL/api/reset-number"
 
     // HTTP 로깅 인터셉터 설정
     private val loggingInterceptor = HttpLoggingInterceptor { message ->
@@ -322,6 +323,45 @@ object ApiClient {
                 }
 
                 callback?.run()
+            }
+        }
+    }
+
+    /**
+     * 전화번호 리셋 (남은 번호를 다시 선택 가능하도록)
+     *
+     * @param phoneNumber 리셋할 전화번호
+     */
+    fun resetNumber(phoneNumber: String) {
+        executorService.execute {
+            var success = false
+            try {
+                val jsonObject = JsonObject().apply {
+                    addProperty("phoneNumber", phoneNumber)
+                    addProperty("timestamp", System.currentTimeMillis())
+                }
+
+                val body = jsonObject.toString().toRequestBody(JSON)
+                val request = Request.Builder()
+                    .url(getResetNumberUrl())
+                    .post(body)
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    success = response.isSuccessful
+                }
+            } catch (e: IOException) {
+                Log.e(TAG, "전화번호 리셋 실패", e)
+            }
+
+            val result = success
+            val phone = phoneNumber
+            mainHandler.post {
+                if (result) {
+                    Log.d(TAG, "전화번호 리셋 성공: $phone")
+                } else {
+                    Log.e(TAG, "전화번호 리셋 실패: $phone")
+                }
             }
         }
     }

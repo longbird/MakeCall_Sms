@@ -36,6 +36,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etCallTimeout: EditText
     private lateinit var etCallDuration: EditText
     private lateinit var etPhoneNumberLimit: EditText
+    private lateinit var etEndTime: EditText
     private lateinit var btnStart: Button
     private lateinit var btnMakeCall: Button
     private lateinit var btnViewHistory: Button
@@ -45,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: SmsHistoryAdapter
     private lateinit var dbHelper: DatabaseHelper
     private val handler = Handler(Looper.getMainLooper())
+    private var endTimeCheckRunnable: Runnable? = null
 
     // SMS ContentObserver (BroadcastReceiver 대체)
     private var smsContentObserver: SmsContentObserver? = null
@@ -81,9 +83,10 @@ class MainActivity : AppCompatActivity() {
         etCallTimeout = findViewById(R.id.etCallTimeout)
         etCallDuration = findViewById(R.id.etCallDuration)
         etPhoneNumberLimit = findViewById(R.id.etPhoneNumberLimit)
+        etEndTime = findViewById(R.id.etEndTime)
         // 기본 서버 주소 설정
         etServerAddress.setText("192.168.0.210:8080")
-        // 기본 타이머 및 전화번호 개수 설정 (이미 XML에서 설정되어 있음)
+        // 기본 타이머, 전화번호 개수, 종료 시간 설정 (이미 XML에서 설정되어 있음)
         btnStart = findViewById(R.id.btnStart)
         btnMakeCall = findViewById(R.id.btnMakeCall)
         btnViewHistory = findViewById(R.id.btnViewHistory)
@@ -232,8 +235,105 @@ class MainActivity : AppCompatActivity() {
         isAutoCalling = true
         phoneNumberQueue.clear()
 
+        // 종료 시간 체크 시작
+        startEndTimeCheck()
+
         // 전화번호 가져오기 시작
         fetchMorePhoneNumbers()
+    }
+
+    /**
+     * 종료 시간 체크 시작
+     */
+    private fun startEndTimeCheck() {
+        val endTimeStr = etEndTime.text.toString().trim()
+        Log.d(TAG, "종료 시간 설정: $endTimeStr")
+
+        endTimeCheckRunnable = object : Runnable {
+            override fun run() {
+                if (!isAutoCalling) {
+                    return // 이미 종료됨
+                }
+
+                if (isEndTimeReached(endTimeStr)) {
+                    Log.d(TAG, "========================================")
+                    Log.d(TAG, "종료 시간 도달: $endTimeStr")
+                    Log.d(TAG, "작동 종료 처리 시작...")
+                    Log.d(TAG, "========================================")
+                    stopAutoCallProcess()
+                } else {
+                    // 1분마다 체크
+                    handler.postDelayed(this, 60000L)
+                }
+            }
+        }
+        handler.postDelayed(endTimeCheckRunnable!!, 60000L) // 1분 후 첫 체크
+    }
+
+    /**
+     * 종료 시간 도달 여부 확인
+     */
+    private fun isEndTimeReached(endTimeStr: String): Boolean {
+        return try {
+            val parts = endTimeStr.split(":")
+            if (parts.size != 2) {
+                Log.w(TAG, "잘못된 종료 시간 형식: $endTimeStr")
+                return false
+            }
+
+            val endHour = parts[0].toIntOrNull() ?: return false
+            val endMinute = parts[1].toIntOrNull() ?: return false
+
+            val calendar = java.util.Calendar.getInstance()
+            val currentHour = calendar.get(java.util.Calendar.HOUR_OF_DAY)
+            val currentMinute = calendar.get(java.util.Calendar.MINUTE)
+
+            val currentTimeInMinutes = currentHour * 60 + currentMinute
+            val endTimeInMinutes = endHour * 60 + endMinute
+
+            currentTimeInMinutes >= endTimeInMinutes
+        } catch (e: Exception) {
+            Log.e(TAG, "종료 시간 체크 오류: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * 자동 전화 프로세스 종료
+     */
+    private fun stopAutoCallProcess() {
+        Log.d(TAG, "자동 전화 프로세스 종료 시작")
+
+        // 진행 중인 전화 종료
+        isAutoCalling = false
+
+        // 종료 시간 체크 중단
+        endTimeCheckRunnable?.let {
+            handler.removeCallbacks(it)
+            endTimeCheckRunnable = null
+        }
+
+        // 남아있는 전화번호들을 서버에 리셋 요청
+        val remainingNumbers = phoneNumberQueue.toList()
+        phoneNumberQueue.clear()
+
+        if (remainingNumbers.isNotEmpty()) {
+            Log.d(TAG, "남은 전화번호 ${remainingNumbers.size}개를 서버에 리셋 요청")
+            for (phoneNumber in remainingNumbers) {
+                ApiClient.resetNumber(phoneNumber)
+            }
+        }
+
+        runOnUiThread {
+            btnStart.isEnabled = true
+            Toast.makeText(
+                this,
+                "종료 시간 도달 - 작동을 종료합니다. 남은 번호: ${remainingNumbers.size}개",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+
+        Log.d(TAG, "자동 전화 프로세스 종료 완료")
     }
 
     /**
