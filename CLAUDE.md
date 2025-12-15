@@ -59,6 +59,7 @@ AutoCallSmsApp은 자동으로 전화를 걸고 SMS 응답을 기록하는 안�
 **PhoneStateReceiver** (`PhoneStateReceiver.kt`)
 - 전화 통화 상태(IDLE, RINGING, OFFHOOK) 모니터링 BroadcastReceiver
 - 자동 통화 관리 구현:
+  - **수신 전화 자동 거부** (RINGING 상태 감지 시)
   - OFFHOOK 상태 후 20초 자동 끊기 타이머
   - 30초 무응답 타임아웃 감지
   - 5초 후 실제 통화 연결 확인 (연결 감지)
@@ -73,7 +74,7 @@ AutoCallSmsApp은 자동으로 전화를 걸고 SMS 응답을 기록하는 안�
   - `no_answer`: 연결 안됨 (OFFHOOK 도달 실패)
   - `failed`: 전화 걸기 실패
 - `ApiClient`를 통해 서버에 통화 상태 기록
-- **중요**: 자동 끊기는 `ANSWER_PHONE_CALLS` 권한이 필요하며, Android 9+ 에서는 기본 전화 앱이 아니면 작동하지 않을 수 있음
+- **중요**: 자동 거부/끊기는 `ANSWER_PHONE_CALLS` 권한이 필요하며, Android 9+ 에서는 기본 전화 앱이 아니면 작동하지 않을 수 있음
 
 **SmsReceiver** (`SmsReceiver.kt`)
 - 수신 SMS 메시지용 BroadcastReceiver
