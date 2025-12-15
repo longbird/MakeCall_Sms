@@ -22,13 +22,18 @@ class PhoneStateReceiver : BroadcastReceiver() {
         private var currentPhoneNumber: String? = null
         private var callStartTime: Long = 0
         private var offhookTime: Long = 0
+        private var connectedTime: Long = 0 // 실제 통화 연결 시간
         private var isCallConnected = false
         private var disconnectRunnable: Runnable? = null
         private var noAnswerRunnable: Runnable? = null
+        private var connectionCheckRunnable: Runnable? = null
 
-        // OFFHOOK은 다이얼링 시작 시점이므로 충분한 시간을 줌 (통화 연결 + 3초 대기)
-        private const val CONNECTED_DISCONNECT_DELAY = 20000L // 20초 (다이얼링 시간 포함)
+        // 타이머 설정
+        private const val CONNECTED_DISCONNECT_DELAY = 20000L // 20초 (통화 연결 후 자동 종료)
         private const val NO_ANSWER_TIMEOUT = 30000L // 30초 (연결 대기 시간)
+        private const val CONNECTION_CHECK_DELAY = 5000L // 5초 (실제 통화 연결 판단 시간)
+        private const val INVALID_NUMBER_THRESHOLD = 5000L // 5초 이내 종료 시 없는 번호로 판단
+
         private var callEndedListener: OnCallEndedListener? = null
 
         /**
@@ -52,6 +57,7 @@ class PhoneStateReceiver : BroadcastReceiver() {
             currentPhoneNumber = phoneNumber
             isCallConnected = false
             offhookTime = 0
+            connectedTime = 0
             callStartTime = System.currentTimeMillis()
 
             // 30초 타이머 시작 (OFFHOOK 상태에 도달하지 못하면 연결 실패)
@@ -84,10 +90,15 @@ class PhoneStateReceiver : BroadcastReceiver() {
                 handler.removeCallbacks(it)
                 noAnswerRunnable = null
             }
+            connectionCheckRunnable?.let {
+                handler.removeCallbacks(it)
+                connectionCheckRunnable = null
+            }
             callEndedListener = null
             currentPhoneNumber = null
             isCallConnected = false
             offhookTime = 0
+            connectedTime = 0
             callStartTime = 0
         }
     }
@@ -146,6 +157,21 @@ class PhoneStateReceiver : BroadcastReceiver() {
         // Context의 약한 참조 저장 (메모리 누수 방지)
         val contextRef = WeakReference(context)
 
+        // 5초 후 실제 통화 연결 확인
+        connectionCheckRunnable = Runnable {
+            if (offhookTime > 0 && connectedTime == 0L && currentPhoneNumber != null) {
+                // 5초 이상 OFFHOOK 상태 유지 = 실제 통화 연결됨
+                connectedTime = System.currentTimeMillis()
+                isCallConnected = true
+                ApiClient.recordCall(currentPhoneNumber!!, "connected")
+                Log.d(TAG, "========================================")
+                Log.d(TAG, "✓ 실제 통화 연결 확인: $currentPhoneNumber")
+                Log.d(TAG, "다이얼링 시작 후 ${connectedTime - offhookTime}ms 경과")
+                Log.d(TAG, "========================================")
+            }
+        }
+        handler.postDelayed(connectionCheckRunnable!!, CONNECTION_CHECK_DELAY)
+
         // 20초 후 자동으로 전화 끊기 (다이얼링 + 통화 시간 포함)
         disconnectRunnable = Runnable {
             contextRef.get()?.let { ctx ->
@@ -155,7 +181,8 @@ class PhoneStateReceiver : BroadcastReceiver() {
         }
         handler.postDelayed(disconnectRunnable!!, CONNECTED_DISCONNECT_DELAY)
 
-        Log.d(TAG, "OFFHOOK 상태 (다이얼링 시작): $currentPhoneNumber, 20초 후 자동 종료 예정")
+        Log.d(TAG, "OFFHOOK 상태 (다이얼링 시작): $currentPhoneNumber")
+        Log.d(TAG, "5초 후 통화 연결 확인, 20초 후 자동 종료 예정")
     }
 
     /**
@@ -173,16 +200,48 @@ class PhoneStateReceiver : BroadcastReceiver() {
             noAnswerRunnable = null
         }
 
-        // 통화 종료 상태 기록
+        connectionCheckRunnable?.let {
+            handler.removeCallbacks(it)
+            connectionCheckRunnable = null
+        }
+
+        // 통화 종료 상태 기록 - 세분화된 상태 판단
         currentPhoneNumber?.let { number ->
+            val now = System.currentTimeMillis()
+
             if (offhookTime > 0) {
-                // OFFHOOK 상태까지 도달했으면 통화 종료로 기록
-                ApiClient.recordCall(number, "ended")
-                Log.d(TAG, "통화 종료 기록: $number")
+                // OFFHOOK 상태까지 도달함
+                val callDuration = now - offhookTime
+
+                Log.d(TAG, "========================================")
+                Log.d(TAG, "통화 종료 분석: $number")
+                Log.d(TAG, "OFFHOOK 도달: ${offhookTime > 0}")
+                Log.d(TAG, "통화 연결: ${connectedTime > 0}")
+                Log.d(TAG, "통화 시간: ${callDuration}ms")
+                Log.d(TAG, "========================================")
+
+                when {
+                    connectedTime > 0 -> {
+                        // 실제 통화 연결되었음 (5초 이상 지속)
+                        val connectedDuration = now - connectedTime
+                        ApiClient.recordCall(number, "ended")
+                        Log.d(TAG, "✓ 정상 통화 종료: $number (연결 시간: ${connectedDuration}ms)")
+                    }
+                    callDuration < INVALID_NUMBER_THRESHOLD -> {
+                        // 5초 이내 종료 = 없는 번호 또는 거부
+                        ApiClient.recordCall(number, "invalid_number")
+                        Log.d(TAG, "✗ 없는 번호/거부: $number (${callDuration}ms)")
+                    }
+                    else -> {
+                        // 5초 이상 지속되었지만 연결 확인 안됨 = 통화 중 등
+                        ApiClient.recordCall(number, "busy")
+                        Log.d(TAG, "○ 통화 중/기타: $number (${callDuration}ms)")
+                    }
+                }
             } else {
                 // OFFHOOK에 도달하지 못했으면 연결 실패
                 ApiClient.recordCall(number, "no_answer")
-                Log.d(TAG, "연결안됨으로 기록: $number")
+                Log.d(TAG, "✗ 연결 안됨: $number (OFFHOOK 도달 실패)")
             }
         }
 
@@ -250,6 +309,7 @@ class PhoneStateReceiver : BroadcastReceiver() {
         isCallConnected = false
         callStartTime = 0
         offhookTime = 0
+        connectedTime = 0
         currentPhoneNumber = null
     }
 }
