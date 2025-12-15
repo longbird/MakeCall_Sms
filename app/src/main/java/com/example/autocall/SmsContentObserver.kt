@@ -224,25 +224,22 @@ class SmsContentObserver(private val context: Context, handler: Handler) : Conte
                         val address = it.getString(addressIndex)
                         val type = it.getInt(typeIndex)
 
-                        Log.d(TAG, "MMS address - type: $type, address: $address")
+                        Log.d(TAG, "MMS address - type: $type (0x${type.toString(16).uppercase()}), address: $address")
 
-                        // type 137 = 발신자 (FROM)
-                        // type 151 = 발신자 (일부 기기)
-                        // type 129 = 발신자 (일부 통신사)
-                        if (type == 137 || type == 151 || type == 129) {
+                        // MMS address types (PDU 표준):
+                        // 137 (0x89) = FROM (발신자)
+                        // 151 (0x97) = TO (수신자)
+                        // 130 (0x82) = CC
+                        // 129 (0x81) = BCC
+                        if (type == 137) {
                             fromAddress = address
-                            Log.d(TAG, "발신자 address 발견: type=$type, address=$address")
+                            Log.d(TAG, "✓ 발신자 address 발견: type=$type, address=$address")
                         }
                     }
                 }
 
-                // 발신자 타입을 찾지 못했으면 첫 번째 주소 사용
-                if (fromAddress == null && it.moveToFirst()) {
-                    val addressIndex = it.getColumnIndex("address")
-                    if (addressIndex >= 0) {
-                        fromAddress = it.getString(addressIndex)
-                        Log.d(TAG, "발신자 타입 없음, 첫 번째 주소 사용: $fromAddress")
-                    }
+                if (fromAddress.isNullOrEmpty()) {
+                    Log.w(TAG, "발신자 address를 찾을 수 없음 (type 137 없음)")
                 }
 
                 return fromAddress
