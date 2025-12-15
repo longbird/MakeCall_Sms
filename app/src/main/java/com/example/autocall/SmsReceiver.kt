@@ -54,8 +54,13 @@ class SmsReceiver : BroadcastReceiver() {
                     val pdus = bundle.get("pdus") as? Array<*>
                     val format = bundle.getString("format")
 
-                    if (pdus != null) {
-                        Log.d(TAG, "PDU 개수: ${pdus.size}")
+                    if (pdus != null && pdus.isNotEmpty()) {
+                        Log.d(TAG, "PDU 개수: ${pdus.size}, Format: $format")
+
+                        // 멀티파트 SMS를 위한 변수
+                        val messages = mutableListOf<SmsMessage>()
+
+                        // 모든 PDU를 SmsMessage로 변환
                         for (pdu in pdus) {
                             val smsMessage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                                 SmsMessage.createFromPdu(pdu as ByteArray, format)
@@ -63,62 +68,82 @@ class SmsReceiver : BroadcastReceiver() {
                                 @Suppress("DEPRECATION")
                                 SmsMessage.createFromPdu(pdu as ByteArray)
                             }
-
-                            val phoneNumber = smsMessage.displayOriginatingAddress
-                            val message = smsMessage.messageBody
-                            val timestamp = smsMessage.timestampMillis
-
-                            Log.d(TAG, "========================================")
-                            Log.d(TAG, "SMS 수신 성공!")
-                            Log.d(TAG, "발신번호: $phoneNumber")
-                            Log.d(TAG, "메시지: $message")
-                            Log.d(TAG, "타임스탬프: $timestamp")
-                            Log.d(TAG, "========================================")
-
-                            // 최근 통화 여부와 상관없이 저장
-                            // 로컬 데이터베이스에 저장
-                            val dbHelper = DatabaseHelper(context)
-                            val id = dbHelper.insertSmsRecord(phoneNumber, message, timestamp)
-                            dbHelper.close()
-
-                            if (id != -1L) {
-                                Log.d(TAG, "SMS 저장 성공: ID = $id")
-
-                                // MainActivity에 SMS 수신 알림 (명시적 Intent 사용)
-                                val updateIntent = Intent(MainActivity.ACTION_SMS_RECEIVED)
-                                updateIntent.setPackage(context.packageName)
-                                context.sendBroadcast(updateIntent)
-                                Log.d(TAG, "UI 갱신 브로드캐스트 전송됨 (패키지: ${context.packageName})")
-
-                                // 동기화를 위한 객체
-                                val lock = Object()
-
-                                ApiClient.recordSms(phoneNumber, message) {
-                                    synchronized(lock) {
-                                        lock.notify()
-                                    }
-                                }
-
-                                // API 호출 완료 대기 (최대 10초)
-                                synchronized(lock) {
-                                    try {
-                                        lock.wait(10000)
-                                    } catch (e: InterruptedException) {
-                                        Log.e(TAG, "API 응답 대기 중 인터럽트 발생")
-                                    }
-                                }
-
-                                // 메인 스레드에서 Toast 표시
-                                Handler(Looper.getMainLooper()).post {
-                                    Toast.makeText(
-                                        context,
-                                        "응답 SMS 저장됨: $phoneNumber",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            } else {
-                                Log.e(TAG, "SMS 저장 실패!")
+                            if (smsMessage != null) {
+                                messages.add(smsMessage)
                             }
+                        }
+
+                        if (messages.isEmpty()) {
+                            Log.w(TAG, "SMS 메시지 파싱 실패")
+                            return
+                        }
+
+                        // 첫 번째 메시지에서 발신번호와 타임스탬프 추출
+                        val firstMessage = messages[0]
+                        val phoneNumber = firstMessage.displayOriginatingAddress
+                        val timestamp = firstMessage.timestampMillis
+
+                        // 모든 메시지 본문을 결합 (멀티파트 SMS 처리)
+                        val messageBody = StringBuilder()
+                        for (smsMessage in messages) {
+                            // displayMessageBody를 사용하여 한글 인코딩 문제 해결
+                            val body = smsMessage.displayMessageBody ?: smsMessage.messageBody ?: ""
+                            messageBody.append(body)
+                        }
+                        val message = messageBody.toString()
+
+                        Log.d(TAG, "========================================")
+                        Log.d(TAG, "SMS 수신 성공!")
+                        Log.d(TAG, "발신번호: $phoneNumber")
+                        Log.d(TAG, "메시지 길이: ${message.length}")
+                        Log.d(TAG, "메시지: $message")
+                        Log.d(TAG, "타임스탬프: $timestamp")
+                        Log.d(TAG, "PDU 개수: ${messages.size} (멀티파트: ${messages.size > 1})")
+                        Log.d(TAG, "========================================")
+
+                        // 최근 통화 여부와 상관없이 저장
+                        // 로컬 데이터베이스에 저장
+                        val dbHelper = DatabaseHelper(context)
+                        val id = dbHelper.insertSmsRecord(phoneNumber, message, timestamp)
+                        dbHelper.close()
+
+                        if (id != -1L) {
+                            Log.d(TAG, "SMS 저장 성공: ID = $id")
+
+                            // MainActivity에 SMS 수신 알림 (명시적 Intent 사용)
+                            val updateIntent = Intent(MainActivity.ACTION_SMS_RECEIVED)
+                            updateIntent.setPackage(context.packageName)
+                            context.sendBroadcast(updateIntent)
+                            Log.d(TAG, "UI 갱신 브로드캐스트 전송됨 (패키지: ${context.packageName})")
+
+                            // 동기화를 위한 객체
+                            val lock = Object()
+
+                            ApiClient.recordSms(phoneNumber, message) {
+                                synchronized(lock) {
+                                    lock.notify()
+                                }
+                            }
+
+                            // API 호출 완료 대기 (최대 10초)
+                            synchronized(lock) {
+                                try {
+                                    lock.wait(10000)
+                                } catch (e: InterruptedException) {
+                                    Log.e(TAG, "API 응답 대기 중 인터럽트 발생")
+                                }
+                            }
+
+                            // 메인 스레드에서 Toast 표시
+                            Handler(Looper.getMainLooper()).post {
+                                Toast.makeText(
+                                    context,
+                                    "응답 SMS 저장됨: $phoneNumber",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        } else {
+                            Log.e(TAG, "SMS 저장 실패!")
                         }
                     } else {
                         Log.w(TAG, "pdus가 null임")
