@@ -60,17 +60,16 @@ AutoCallSmsApp은 자동으로 전화를 걸고 SMS 응답을 기록하는 안�
 - 전화 통화 상태(IDLE, RINGING, OFFHOOK) 모니터링 BroadcastReceiver
 - 자동 통화 관리 구현:
   - **수신 전화 자동 거부** (RINGING 상태 감지 시)
-  - OFFHOOK 상태 후 20초 자동 끊기 타이머
-  - 30초 무응답 타임아웃 감지
-  - 5초 후 실제 통화 연결 확인 (연결 감지)
+  - 동적 타이머 설정 (기본값: 전화 시도 30초, 연결 후 대기 20초)
+  - 12초 후 실제 통화 연결 확인 (통신사 안내 멘트 제외)
   - `OnCallEndedListener` 호출하여 큐의 다음 전화 트리거
 - 세분화된 통화 상태 기록:
   - `started`: 전화 걸기 시작
   - `dialing`: OFFHOOK 상태 (다이얼링 시작)
-  - `connected`: 실제 통화 연결됨 (5초 이상 지속)
+  - `connected`: 실제 통화 연결됨 (12초 이상 지속)
   - `ended`: 정상 통화 종료
-  - `invalid_number`: 없는 번호/거부 (5초 이내 종료)
-  - `busy`: 통화 중/기타 (5초~30초 사이 종료)
+  - `invalid_number`: 없는 번호/통신사 안내 (12초 이내 종료)
+  - `busy`: 통화 중/기타 (12초~30초 사이 종료)
   - `no_answer`: 연결 안됨 (OFFHOOK 도달 실패)
   - `failed`: 전화 걸기 실패
 - `ApiClient`를 통해 서버에 통화 상태 기록
@@ -170,12 +169,14 @@ POST /api/call-record
 통화 상태 설명:
 - started: 전화 걸기 시작
 - dialing: 다이얼링 시작 (OFFHOOK 도달)
-- connected: 실제 통화 연결 (5초 이상 지속)
+- connected: 실제 통화 연결 (12초 이상 지속)
 - ended: 정상 통화 종료
-- invalid_number: 없는 번호/거부 (5초 이내 종료)
-- busy: 통화 중/기타 (5초~30초 사이)
+- invalid_number: 없는 번호/통신사 안내 (12초 이내 종료)
+- busy: 통화 중/기타 (12초~30초 사이)
 - no_answer: 연결 실패 (OFFHOOK 미도달)
 - failed: 전화 걸기 실패 (Exception)
+
+참고: 12초 기준은 통신사 안내 멘트(약 5~10초)와 실제 통화를 구분하기 위함
 
 POST /api/sms-record
 본문: { "phoneNumber": "01012345678", "message": "SMS 내용", "timestamp": 1234567890 }
