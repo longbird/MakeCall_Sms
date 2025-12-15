@@ -48,6 +48,13 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var endTimeCheckRunnable: Runnable? = null
 
+    // 진행 상황 표시 뷰
+    private lateinit var statusCard: com.google.android.material.card.MaterialCardView
+    private lateinit var tvStatus: TextView
+    private lateinit var tvProgress: TextView
+    private lateinit var tvCurrentNumber: TextView
+    private lateinit var progressBar: ProgressBar
+
     // SMS ContentObserver (BroadcastReceiver 대체)
     private var smsContentObserver: SmsContentObserver? = null
     private var isObserverRegistered = false
@@ -69,6 +76,8 @@ class MainActivity : AppCompatActivity() {
     private val phoneNumberQueue: Queue<String> = LinkedList()
     private var isAutoCalling = false
     private var hasAutoStarted = false // 자동 시작 플래그
+    private var totalPhoneNumbersProcessed = 0 // 현재까지 처리한 전화번호 개수
+    private var currentBatchSize = 0 // 현재 배치의 전화번호 개수
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -93,6 +102,13 @@ class MainActivity : AppCompatActivity() {
         btnCheckPermissions = findViewById(R.id.btnCheckPermissions)
         btnTestSms = findViewById(R.id.btnTestSms)
         recyclerView = findViewById(R.id.recyclerView)
+
+        // 진행 상황 표시 뷰 초기화
+        statusCard = findViewById(R.id.statusCard)
+        tvStatus = findViewById(R.id.tvStatus)
+        tvProgress = findViewById(R.id.tvProgress)
+        tvCurrentNumber = findViewById(R.id.tvCurrentNumber)
+        progressBar = findViewById(R.id.progressBar)
 
         // RecyclerView 설정
         recyclerView.layoutManager = LinearLayoutManager(this)
@@ -234,6 +250,11 @@ class MainActivity : AppCompatActivity() {
         btnStart.isEnabled = false
         isAutoCalling = true
         phoneNumberQueue.clear()
+        totalPhoneNumbersProcessed = 0
+        currentBatchSize = 0
+
+        // 진행 상황 표시
+        updateStatus("전화번호 가져오는 중...")
 
         // 종료 시간 체크 시작
         startEndTimeCheck()
@@ -326,6 +347,7 @@ class MainActivity : AppCompatActivity() {
 
         runOnUiThread {
             btnStart.isEnabled = true
+            updateStatus("종료됨", totalPhoneNumbersProcessed, currentBatchSize)
             Toast.makeText(
                 this,
                 "종료 시간 도달 - 작동을 종료합니다. 남은 번호: ${remainingNumbers.size}개",
@@ -358,6 +380,7 @@ class MainActivity : AppCompatActivity() {
                     if (phoneNumbers.isNotEmpty()) {
                         // 전화번호를 큐에 추가
                         phoneNumberQueue.addAll(phoneNumbers)
+                        currentBatchSize += phoneNumbers.size
                         Toast.makeText(
                             this@MainActivity,
                             "${phoneNumbers.size}개의 전화번호를 가져왔습니다",
@@ -373,6 +396,7 @@ class MainActivity : AppCompatActivity() {
                             "더 이상 가져올 전화번호가 없습니다. 작업을 종료합니다.",
                             Toast.LENGTH_SHORT
                         ).show()
+                        updateStatus("작업 완료", totalPhoneNumbersProcessed, totalPhoneNumbersProcessed)
                         isAutoCalling = false
                         btnStart.isEnabled = true
                     }
@@ -382,6 +406,7 @@ class MainActivity : AppCompatActivity() {
             override fun onFailure(error: String) {
                 runOnUiThread {
                     // 오류 발생 시에도 작업 종료
+                    updateStatus("오류 발생", totalPhoneNumbersProcessed, currentBatchSize)
                     Toast.makeText(
                         this@MainActivity,
                         "오류: $error - 작업을 종료합니다.",
@@ -410,10 +435,20 @@ class MainActivity : AppCompatActivity() {
 
         val nextPhoneNumber = phoneNumberQueue.poll()
         if (!nextPhoneNumber.isNullOrEmpty()) {
+            totalPhoneNumbersProcessed++
             etPhoneNumber.setText(nextPhoneNumber)
+
+            // 진행 상황 업데이트
+            updateStatus(
+                "전화 걸기",
+                totalPhoneNumbersProcessed,
+                currentBatchSize,
+                nextPhoneNumber
+            )
+
             Toast.makeText(
                 this,
-                "전화번호: $nextPhoneNumber (남은 개수: ${phoneNumberQueue.size})",
+                "전화번호: $nextPhoneNumber (${totalPhoneNumbersProcessed}/$currentBatchSize)",
                 Toast.LENGTH_SHORT
             ).show()
             makePhoneCall(nextPhoneNumber)
@@ -749,5 +784,40 @@ class MainActivity : AppCompatActivity() {
         }
         isAutoCalling = false
         phoneNumberQueue.clear()
+    }
+
+    /**
+     * 진행 상황 표시 업데이트
+     */
+    private fun updateStatus(status: String, currentIndex: Int = 0, total: Int = 0, phoneNumber: String? = null) {
+        runOnUiThread {
+            statusCard.visibility = android.view.View.VISIBLE
+            tvStatus.text = status
+
+            if (total > 0) {
+                tvProgress.text = "진행: $currentIndex/$total"
+                progressBar.max = total
+                progressBar.progress = currentIndex
+            } else {
+                tvProgress.text = ""
+                progressBar.progress = 0
+            }
+
+            if (!phoneNumber.isNullOrEmpty()) {
+                tvCurrentNumber.visibility = android.view.View.VISIBLE
+                tvCurrentNumber.text = "현재: $phoneNumber"
+            } else {
+                tvCurrentNumber.visibility = android.view.View.GONE
+            }
+        }
+    }
+
+    /**
+     * 진행 상황 표시 숨기기
+     */
+    private fun hideStatus() {
+        runOnUiThread {
+            statusCard.visibility = android.view.View.GONE
+        }
     }
 }
