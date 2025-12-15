@@ -31,8 +31,8 @@ class PhoneStateReceiver : BroadcastReceiver() {
         // 타이머 설정 (동적으로 변경 가능)
         private var noAnswerTimeout = 30000L // 30초 (연결 대기 시간) - 기본값
         private var connectedDisconnectDelay = 20000L // 20초 (통화 연결 후 자동 종료) - 기본값
-        private const val CONNECTION_CHECK_DELAY = 5000L // 5초 (실제 통화 연결 판단 시간)
-        private const val INVALID_NUMBER_THRESHOLD = 5000L // 5초 이내 종료 시 없는 번호로 판단
+        private const val CONNECTION_CHECK_DELAY = 12000L // 12초 (실제 통화 연결 판단 시간 - 통신사 안내 멘트 제외)
+        private const val INVALID_NUMBER_THRESHOLD = 12000L // 12초 이내 종료 시 없는 번호로 판단 (통신사 안내 멘트 포함)
 
         private var callEndedListener: OnCallEndedListener? = null
 
@@ -180,10 +180,10 @@ class PhoneStateReceiver : BroadcastReceiver() {
         // Context의 약한 참조 저장 (메모리 누수 방지)
         val contextRef = WeakReference(context)
 
-        // 5초 후 실제 통화 연결 확인
+        // 12초 후 실제 통화 연결 확인 (통신사 안내 멘트 제외)
         connectionCheckRunnable = Runnable {
             if (offhookTime > 0 && connectedTime == 0L && currentPhoneNumber != null) {
-                // 5초 이상 OFFHOOK 상태 유지 = 실제 통화 연결됨
+                // 12초 이상 OFFHOOK 상태 유지 = 실제 통화 연결됨
                 connectedTime = System.currentTimeMillis()
                 isCallConnected = true
                 ApiClient.recordCall(currentPhoneNumber!!, "connected")
@@ -205,7 +205,7 @@ class PhoneStateReceiver : BroadcastReceiver() {
         handler.postDelayed(disconnectRunnable!!, connectedDisconnectDelay)
 
         Log.d(TAG, "OFFHOOK 상태 (다이얼링 시작): $currentPhoneNumber")
-        Log.d(TAG, "5초 후 통화 연결 확인, ${connectedDisconnectDelay/1000}초 후 자동 종료 예정")
+        Log.d(TAG, "12초 후 통화 연결 확인, ${connectedDisconnectDelay/1000}초 후 자동 종료 예정")
     }
 
     /**
@@ -245,18 +245,18 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
                 when {
                     connectedTime > 0 -> {
-                        // 실제 통화 연결되었음 (5초 이상 지속)
+                        // 실제 통화 연결되었음 (12초 이상 지속)
                         val connectedDuration = now - connectedTime
                         ApiClient.recordCall(number, "ended")
                         Log.d(TAG, "✓ 정상 통화 종료: $number (연결 시간: ${connectedDuration}ms)")
                     }
                     callDuration < INVALID_NUMBER_THRESHOLD -> {
-                        // 5초 이내 종료 = 없는 번호 또는 거부
+                        // 12초 이내 종료 = 없는 번호 또는 거부 (통신사 안내 멘트 포함)
                         ApiClient.recordCall(number, "invalid_number")
-                        Log.d(TAG, "✗ 없는 번호/거부: $number (${callDuration}ms)")
+                        Log.d(TAG, "✗ 없는 번호/통신사 안내: $number (${callDuration}ms)")
                     }
                     else -> {
-                        // 5초 이상 지속되었지만 연결 확인 안됨 = 통화 중 등
+                        // 12초 이상 지속되었지만 연결 확인 안됨 = 통화 중 등
                         ApiClient.recordCall(number, "busy")
                         Log.d(TAG, "○ 통화 중/기타: $number (${callDuration}ms)")
                     }
