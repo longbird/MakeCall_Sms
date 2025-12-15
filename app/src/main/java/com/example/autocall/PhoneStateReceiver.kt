@@ -183,29 +183,30 @@ class PhoneStateReceiver : BroadcastReceiver() {
         // 12초 후 실제 통화 연결 확인 (통신사 안내 멘트 제외)
         connectionCheckRunnable = Runnable {
             if (offhookTime > 0 && connectedTime == 0L && currentPhoneNumber != null) {
-                // 12초 이상 OFFHOOK 상태 유지 = 실제 통화 연결됨
+                // 12초 후에도 아직 OFFHOOK 상태 = 실제 통화 연결됨
                 connectedTime = System.currentTimeMillis()
                 isCallConnected = true
                 ApiClient.recordCall(currentPhoneNumber!!, "connected")
                 Log.d(TAG, "========================================")
                 Log.d(TAG, "✓ 실제 통화 연결 확인: $currentPhoneNumber")
                 Log.d(TAG, "다이얼링 시작 후 ${connectedTime - offhookTime}ms 경과")
+                Log.d(TAG, "연결 확인 후 ${connectedDisconnectDelay/1000}초 대기 후 종료")
                 Log.d(TAG, "========================================")
+
+                // 연결 확인 후 설정된 시간만큼 대기 후 전화 끊기
+                disconnectRunnable = Runnable {
+                    contextRef.get()?.let { ctx ->
+                        Log.d(TAG, "${connectedDisconnectDelay/1000}초 경과, 전화 종료 시도: $currentPhoneNumber")
+                        disconnectCall(ctx)
+                    }
+                }
+                handler.postDelayed(disconnectRunnable!!, connectedDisconnectDelay)
             }
         }
         handler.postDelayed(connectionCheckRunnable!!, CONNECTION_CHECK_DELAY)
 
-        // 설정된 시간 후 자동으로 전화 끊기 (다이얼링 + 통화 시간 포함)
-        disconnectRunnable = Runnable {
-            contextRef.get()?.let { ctx ->
-                Log.d(TAG, "${connectedDisconnectDelay/1000}초 경과, 전화 종료 시도: $currentPhoneNumber")
-                disconnectCall(ctx)
-            }
-        }
-        handler.postDelayed(disconnectRunnable!!, connectedDisconnectDelay)
-
         Log.d(TAG, "OFFHOOK 상태 (다이얼링 시작): $currentPhoneNumber")
-        Log.d(TAG, "12초 후 통화 연결 확인, ${connectedDisconnectDelay/1000}초 후 자동 종료 예정")
+        Log.d(TAG, "${CONNECTION_CHECK_DELAY/1000}초 후 통화 연결 확인 예정")
     }
 
     /**
