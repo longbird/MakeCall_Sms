@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew assembleDebug:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(java -version:*)",
+      "Bash(sudo apt update:*)",
+      "Bash(./gradlew clean:*)",
+      "Bash(adb uninstall:*)"
+    ]
+  }
+}

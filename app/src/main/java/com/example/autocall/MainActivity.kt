@@ -134,9 +134,15 @@ class MainActivity : AppCompatActivity() {
         }
         Log.d(TAG, "Action 필터: $ACTION_SMS_RECEIVED")
 
-        // 시작 버튼 클릭 이벤트
+        // 시작/중지 버튼 클릭 이벤트
         btnStart.setOnClickListener {
-            startAutoCallProcess()
+            if (isAutoCalling) {
+                // 중지 버튼으로 동작
+                stopAutoCallProcessManually()
+            } else {
+                // 시작 버튼으로 동작
+                startAutoCallProcess()
+            }
         }
 
         // 전화 걸기 버튼 클릭 이벤트
@@ -177,8 +183,8 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // 앱 실행 시 자동으로 작업 시작
-        autoStartIfReady()
+        // 앱 실행 시 자동 시작 기능 중지 (사용자가 시작 버튼을 눌러야 시작됨)
+        // autoStartIfReady() 제거됨
     }
 
     /**
@@ -249,11 +255,13 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "서버: $serverAddress")
         Log.d(TAG, "========================================")
 
-        btnStart.isEnabled = false
         isAutoCalling = true
         phoneNumberQueue.clear()
         totalPhoneNumbersProcessed = 0
         currentBatchSize = 0
+
+        // 시작 버튼을 중지 버튼으로 변경
+        updateStartStopButton()
 
         // 진행 상황 표시
         updateStatus("전화번호 가져오는 중...")
@@ -322,10 +330,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 자동 전화 프로세스 종료
+     * 자동 전화 프로세스 종료 (종료 시간 도달 시)
      */
     private fun stopAutoCallProcess() {
-        Log.d(TAG, "자동 전화 프로세스 종료 시작")
+        Log.d(TAG, "자동 전화 프로세스 종료 시작 (종료 시간 도달)")
 
         // 진행 중인 전화 종료
         isAutoCalling = false
@@ -348,7 +356,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         runOnUiThread {
-            btnStart.isEnabled = true
+            updateStartStopButton()
             updateStatus("종료됨", totalPhoneNumbersProcessed, currentBatchSize)
             Toast.makeText(
                 this,
@@ -358,6 +366,46 @@ class MainActivity : AppCompatActivity() {
         }
 
         Log.d(TAG, "자동 전화 프로세스 종료 완료")
+    }
+
+    /**
+     * 자동 전화 프로세스 수동 중지 (사용자가 중지 버튼을 눌렀을 때)
+     * 현재 진행중인 번호까지만 처리하고 중지
+     */
+    private fun stopAutoCallProcessManually() {
+        Log.d(TAG, "자동 전화 프로세스 수동 중지 시작")
+
+        // 진행 중인 전화 종료 플래그 설정 (현재 진행중인 번호까지만 처리)
+        isAutoCalling = false
+
+        // 종료 시간 체크 중단
+        endTimeCheckRunnable?.let {
+            handler.removeCallbacks(it)
+            endTimeCheckRunnable = null
+        }
+
+        // 남아있는 전화번호들을 서버에 reset-number API로 리셋 요청
+        val remainingNumbers = phoneNumberQueue.toList()
+        phoneNumberQueue.clear()
+
+        if (remainingNumbers.isNotEmpty()) {
+            Log.d(TAG, "남은 전화번호 ${remainingNumbers.size}개를 reset-number API로 리셋 요청")
+            for (phoneNumber in remainingNumbers) {
+                ApiClient.resetNumber(phoneNumber)
+            }
+        }
+
+        runOnUiThread {
+            updateStartStopButton()
+            updateStatus("중지됨", totalPhoneNumbersProcessed, currentBatchSize)
+            Toast.makeText(
+                this,
+                "작업을 중지했습니다. 남은 번호 ${remainingNumbers.size}개는 초기화되었습니다.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+
+        Log.d(TAG, "자동 전화 프로세스 수동 중지 완료")
     }
 
     /**
@@ -398,9 +446,9 @@ class MainActivity : AppCompatActivity() {
                             "더 이상 가져올 전화번호가 없습니다. 작업을 종료합니다.",
                             Toast.LENGTH_SHORT
                         ).show()
-                        updateStatus("작업 완료", totalPhoneNumbersProcessed, totalPhoneNumbersProcessed)
+                        updateStatus("대기 중", totalPhoneNumbersProcessed, totalPhoneNumbersProcessed)
                         isAutoCalling = false
-                        btnStart.isEnabled = true
+                        updateStartStopButton()
                     }
                 }
             }
@@ -408,14 +456,14 @@ class MainActivity : AppCompatActivity() {
             override fun onFailure(error: String) {
                 runOnUiThread {
                     // 오류 발생 시에도 작업 종료
-                    updateStatus(error, totalPhoneNumbersProcessed, currentBatchSize)
+                    updateStatus("대기 중", totalPhoneNumbersProcessed, currentBatchSize)
                     Toast.makeText(
                         this@MainActivity,
                         "오류: $error - 작업을 종료합니다.",
                         Toast.LENGTH_LONG
                     ).show()
                     isAutoCalling = false
-                    btnStart.isEnabled = true
+                    updateStartStopButton()
                 }
             }
         })
@@ -505,8 +553,7 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "모든 권한이 허용되었습니다", Toast.LENGTH_SHORT).show()
                 // 권한이 허용되면 ContentObserver 등록 시도
                 registerSmsContentObserver()
-                // 권한 허용 후 자동 시작
-                autoStartIfReady()
+                // 권한 허용 후 자동 시작 기능은 제거됨 (사용자가 시작 버튼을 눌러야 함)
             } else {
                 Toast.makeText(this, "권한이 필요합니다. SMS 수신이 작동하지 않을 수 있습니다.", Toast.LENGTH_LONG).show()
             }
@@ -820,6 +867,24 @@ class MainActivity : AppCompatActivity() {
     private fun hideStatus() {
         runOnUiThread {
             statusCard.visibility = android.view.View.GONE
+        }
+    }
+
+    /**
+     * 시작/중지 버튼 텍스트 및 상태 업데이트
+     */
+    private fun updateStartStopButton() {
+        runOnUiThread {
+            if (isAutoCalling) {
+                btnStart.text = "중지"
+                // 빨간색으로 변경 (중지 버튼)
+                btnStart.backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#F44336"))
+            } else {
+                btnStart.text = "시작"
+                // 초록색으로 변경 (시작 버튼)
+                btnStart.backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#4CAF50"))
+            }
+            btnStart.isEnabled = true
         }
     }
 }
