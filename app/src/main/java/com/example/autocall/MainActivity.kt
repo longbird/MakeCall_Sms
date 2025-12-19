@@ -33,6 +33,11 @@ class MainActivity : AppCompatActivity() {
         private const val PERMISSION_REQUEST_CODE = 100
         const val ACTION_SMS_RECEIVED = "com.example.autocall.SMS_RECEIVED"
 
+        // SharedPreferences 관련 상수
+        private const val PREF_NAME = "AutoCallSettings"
+        private const val KEY_SERVER_ADDRESS = "server_address"
+        private const val DEFAULT_SERVER_ADDRESS = "192.168.0.210:8080"
+
         // 오디오 설정 상태 (PhoneStateReceiver에서 접근)
         var isSpeakerMuted = true
         var isMicMuted = true
@@ -102,8 +107,10 @@ class MainActivity : AppCompatActivity() {
         etCallDuration = findViewById(R.id.etCallDuration)
         etPhoneNumberLimit = findViewById(R.id.etPhoneNumberLimit)
         etEndTime = findViewById(R.id.etEndTime)
-        // 기본 서버 주소 설정 - 192.168.0.210:8080
-        etServerAddress.setText("61.42.53.61:8080")
+        // 저장된 서버 주소 로드 (없으면 기본값 사용)
+        val savedServerAddress = loadServerAddress()
+        etServerAddress.setText(savedServerAddress)
+        Log.d(TAG, "서버 주소 로드: $savedServerAddress")
         // 기본 타이머, 전화번호 개수, 종료 시간 설정 (이미 XML에서 설정되어 있음)
         btnStart = findViewById(R.id.btnStart)
         btnMakeCall = findViewById(R.id.btnMakeCall)
@@ -446,6 +453,11 @@ class MainActivity : AppCompatActivity() {
         ApiClient.getPhoneNumbers(phoneNumberLimit, object : ApiClient.PhoneNumbersCallback {
             override fun onSuccess(phoneNumbers: List<String>) {
                 runOnUiThread {
+                    // 서버 접속 성공 - 현재 서버 주소 저장
+                    val currentServerAddress = etServerAddress.text.toString().trim()
+                    saveServerAddress(currentServerAddress)
+                    Log.d(TAG, "서버 접속 성공 - 주소 저장: $currentServerAddress")
+
                     if (phoneNumbers.isNotEmpty()) {
                         // 전화번호를 큐에 추가
                         phoneNumberQueue.addAll(phoneNumbers)
@@ -905,5 +917,22 @@ class MainActivity : AppCompatActivity() {
             }
             btnStart.isEnabled = true
         }
+    }
+
+    /**
+     * 서버 주소 저장
+     */
+    private fun saveServerAddress(address: String) {
+        val prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_SERVER_ADDRESS, address).apply()
+        Log.d(TAG, "서버 주소 저장됨: $address")
+    }
+
+    /**
+     * 저장된 서버 주소 로드 (없으면 기본값 반환)
+     */
+    private fun loadServerAddress(): String {
+        val prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(KEY_SERVER_ADDRESS, DEFAULT_SERVER_ADDRESS) ?: DEFAULT_SERVER_ADDRESS
     }
 }
