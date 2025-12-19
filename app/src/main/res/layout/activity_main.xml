@@ -117,6 +117,32 @@
         </com.google.android.material.textfield.TextInputLayout>
     </LinearLayout>
 
+    <!-- 스피커/마이크 설정 체크박스 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="8dp">
+
+        <CheckBox
+            android:id="@+id/cbMuteSpeaker"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="스피커 끄기"
+            android:checked="true"
+            android:textSize="14sp" />
+
+        <CheckBox
+            android:id="@+id/cbMuteMic"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="마이크 끄기"
+            android:checked="true"
+            android:textSize="14sp" />
+    </LinearLayout>
+
     <Button
         android:id="@+id/btnStart"
         android:layout_width="match_parent"

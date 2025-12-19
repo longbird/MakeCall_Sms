@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -32,6 +33,10 @@ class PhoneStateReceiver : BroadcastReceiver() {
         private var connectedDisconnectDelay = 20000L // 20초 (통화 연결 후 자동 종료) - 기본값
 
         private var callEndedListener: OnCallEndedListener? = null
+
+        // 오디오 상태 저장 (복원용)
+        private var previousSpeakerphoneOn: Boolean? = null
+        private var previousMicMute: Boolean? = null
 
         /**
          * 통화 타이머 설정
@@ -104,6 +109,8 @@ class PhoneStateReceiver : BroadcastReceiver() {
             offhookTime = 0
             connectedTime = 0
             callStartTime = 0
+            previousSpeakerphoneOn = null
+            previousMicMute = null
         }
     }
 
@@ -175,6 +182,9 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
         Log.d(TAG, "OFFHOOK 상태 (통화 연결됨): $currentPhoneNumber")
 
+        // 오디오 설정 적용 (스피커/마이크 끄기)
+        applyAudioSettings(context)
+
         // Context의 약한 참조 저장 (메모리 누수 방지)
         val contextRef = WeakReference(context)
 
@@ -202,6 +212,9 @@ class PhoneStateReceiver : BroadcastReceiver() {
             handler.removeCallbacks(it)
             noAnswerRunnable = null
         }
+
+        // 오디오 설정 복원
+        restoreAudioSettings(context)
 
         // 통화 종료 상태 기록
         currentPhoneNumber?.let { number ->
@@ -352,5 +365,82 @@ class PhoneStateReceiver : BroadcastReceiver() {
         offhookTime = 0
         connectedTime = 0
         currentPhoneNumber = null
+        previousSpeakerphoneOn = null
+        previousMicMute = null
+    }
+
+    /**
+     * 오디오 설정 적용 (스피커/마이크 끄기)
+     */
+    private fun applyAudioSettings(context: Context) {
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (audioManager == null) {
+                Log.w(TAG, "AudioManager를 가져올 수 없음")
+                return
+            }
+
+            // 현재 상태 저장 (복원용)
+            previousSpeakerphoneOn = audioManager.isSpeakerphoneOn
+            previousMicMute = audioManager.isMicrophoneMute
+
+            Log.d(TAG, "========================================")
+            Log.d(TAG, "오디오 설정 적용")
+            Log.d(TAG, "이전 스피커폰 상태: $previousSpeakerphoneOn")
+            Log.d(TAG, "이전 마이크 뮤트 상태: $previousMicMute")
+            Log.d(TAG, "스피커 끄기 설정: ${MainActivity.isSpeakerMuted}")
+            Log.d(TAG, "마이크 끄기 설정: ${MainActivity.isMicMuted}")
+            Log.d(TAG, "========================================")
+
+            // 스피커 끄기 설정이 체크되어 있으면 스피커폰 끄기
+            if (MainActivity.isSpeakerMuted) {
+                audioManager.isSpeakerphoneOn = false
+                Log.d(TAG, "스피커폰 끄기 적용")
+            }
+
+            // 마이크 끄기 설정이 체크되어 있으면 마이크 음소거
+            if (MainActivity.isMicMuted) {
+                audioManager.isMicrophoneMute = true
+                Log.d(TAG, "마이크 음소거 적용")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "오디오 설정 적용 실패: ${e.message}", e)
+        }
+    }
+
+    /**
+     * 오디오 설정 복원 (원래 상태로)
+     */
+    private fun restoreAudioSettings(context: Context) {
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (audioManager == null) {
+                Log.w(TAG, "AudioManager를 가져올 수 없음")
+                return
+            }
+
+            Log.d(TAG, "========================================")
+            Log.d(TAG, "오디오 설정 복원")
+            Log.d(TAG, "복원할 스피커폰 상태: $previousSpeakerphoneOn")
+            Log.d(TAG, "복원할 마이크 뮤트 상태: $previousMicMute")
+            Log.d(TAG, "========================================")
+
+            // 이전 상태로 복원
+            previousSpeakerphoneOn?.let { prev ->
+                audioManager.isSpeakerphoneOn = prev
+                Log.d(TAG, "스피커폰 상태 복원: $prev")
+            }
+
+            previousMicMute?.let { prev ->
+                audioManager.isMicrophoneMute = prev
+                Log.d(TAG, "마이크 뮤트 상태 복원: $prev")
+            }
+
+            // 복원 후 초기화
+            previousSpeakerphoneOn = null
+            previousMicMute = null
+        } catch (e: Exception) {
+            Log.e(TAG, "오디오 설정 복원 실패: ${e.message}", e)
+        }
     }
 }

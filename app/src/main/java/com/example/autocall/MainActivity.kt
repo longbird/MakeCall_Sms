@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -31,6 +32,10 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val PERMISSION_REQUEST_CODE = 100
         const val ACTION_SMS_RECEIVED = "com.example.autocall.SMS_RECEIVED"
+
+        // 오디오 설정 상태 (PhoneStateReceiver에서 접근)
+        var isSpeakerMuted = true
+        var isMicMuted = true
     }
 
     private lateinit var etPhoneNumber: EditText
@@ -44,6 +49,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnViewHistory: Button
     private lateinit var btnCheckPermissions: Button
     private lateinit var btnTestSms: Button
+    private lateinit var cbMuteSpeaker: CheckBox
+    private lateinit var cbMuteMic: CheckBox
     private lateinit var recyclerView: RecyclerView
     private lateinit var adapter: SmsHistoryAdapter
     private lateinit var dbHelper: DatabaseHelper
@@ -95,15 +102,27 @@ class MainActivity : AppCompatActivity() {
         etCallDuration = findViewById(R.id.etCallDuration)
         etPhoneNumberLimit = findViewById(R.id.etPhoneNumberLimit)
         etEndTime = findViewById(R.id.etEndTime)
-        // 기본 서버 주소 설정
-        etServerAddress.setText("192.168.0.210:8080")
+        // 기본 서버 주소 설정 - 192.168.0.210:8080
+        etServerAddress.setText("61.42.53.61:8080")
         // 기본 타이머, 전화번호 개수, 종료 시간 설정 (이미 XML에서 설정되어 있음)
         btnStart = findViewById(R.id.btnStart)
         btnMakeCall = findViewById(R.id.btnMakeCall)
         btnViewHistory = findViewById(R.id.btnViewHistory)
         btnCheckPermissions = findViewById(R.id.btnCheckPermissions)
         btnTestSms = findViewById(R.id.btnTestSms)
+        cbMuteSpeaker = findViewById(R.id.cbMuteSpeaker)
+        cbMuteMic = findViewById(R.id.cbMuteMic)
         recyclerView = findViewById(R.id.recyclerView)
+
+        // 체크박스 리스너 설정 - 상태 변경 시 companion object 변수 업데이트
+        cbMuteSpeaker.setOnCheckedChangeListener { _, isChecked ->
+            isSpeakerMuted = isChecked
+            Log.d(TAG, "스피커 끄기 설정: $isChecked")
+        }
+        cbMuteMic.setOnCheckedChangeListener { _, isChecked ->
+            isMicMuted = isChecked
+            Log.d(TAG, "마이크 끄기 설정: $isChecked")
+        }
 
         // 진행 상황 표시 뷰 초기화
         statusCard = findViewById(R.id.statusCard)
