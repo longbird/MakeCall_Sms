@@ -162,8 +162,12 @@ object ApiClient {
                     e.printStackTrace()
                 }
 
+                // limit 파라미터를 쿼리 스트링으로 추가
+                val urlWithLimit = "$url?limit=$limit"
+                Log.d(TAG, "요청 URL (limit 포함): $urlWithLimit")
+
                 val request = Request.Builder()
-                    .url(url)
+                    .url(urlWithLimit)
                     .get()
                     .build()
 

@@ -34,9 +34,141 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
         private var callEndedListener: OnCallEndedListener? = null
 
-        // 오디오 상태 저장 (복원용)
+        // 중복 처리 방지 플래그
+        private var isProcessingCallEnd = false
+
+        // 우리가 전화를 끊었는지 여부 (타이머에 의한 자동 종료)
+        private var wasDisconnectedByUs = false
+
+        // 오디오 상태 저장 (복원용) - 시작/중지 시에만 사용
         private var previousSpeakerphoneOn: Boolean? = null
         private var previousMicMute: Boolean? = null
+        private var previousVoiceCallVolume: Int? = null
+        private var isAudioSettingsApplied = false
+
+        /**
+         * 오디오 설정 초기화 (시작 시 1회 - 원래 상태 저장)
+         */
+        fun applyAudioSettings(context: Context) {
+            if (isAudioSettingsApplied) {
+                Log.d(TAG, "오디오 설정 이미 초기화됨 - 건너뜀")
+                return
+            }
+
+            try {
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                if (audioManager == null) {
+                    Log.w(TAG, "AudioManager를 가져올 수 없음")
+                    return
+                }
+
+                // 현재 상태 저장 (복원용) - 시작 시 1회만
+                previousSpeakerphoneOn = audioManager.isSpeakerphoneOn
+                previousMicMute = audioManager.isMicrophoneMute
+                previousVoiceCallVolume = audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+
+                Log.d(TAG, "========================================")
+                Log.d(TAG, "오디오 원래 상태 저장 (시작)")
+                Log.d(TAG, "이전 스피커폰 상태: $previousSpeakerphoneOn")
+                Log.d(TAG, "이전 마이크 뮤트 상태: $previousMicMute")
+                Log.d(TAG, "이전 통화 볼륨: $previousVoiceCallVolume")
+                Log.d(TAG, "스피커 끄기 설정: ${MainActivity.isSpeakerMuted}")
+                Log.d(TAG, "마이크 끄기 설정: ${MainActivity.isMicMuted}")
+                Log.d(TAG, "========================================")
+
+                isAudioSettingsApplied = true
+            } catch (e: Exception) {
+                Log.e(TAG, "오디오 설정 초기화 실패: ${e.message}", e)
+            }
+        }
+
+        /**
+         * 통화 중 오디오 음소거 적용 (OFFHOOK 시 매번 호출)
+         */
+        fun applyCallAudioMute(context: Context) {
+            if (!isAudioSettingsApplied) {
+                Log.d(TAG, "오디오 설정 초기화 안 됨 - 음소거 건너뜀")
+                return
+            }
+
+            try {
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                if (audioManager == null) {
+                    Log.w(TAG, "AudioManager를 가져올 수 없음")
+                    return
+                }
+
+                Log.d(TAG, "========================================")
+                Log.d(TAG, "통화 중 오디오 음소거 적용")
+                Log.d(TAG, "스피커 끄기 설정: ${MainActivity.isSpeakerMuted}")
+                Log.d(TAG, "마이크 끄기 설정: ${MainActivity.isMicMuted}")
+                Log.d(TAG, "========================================")
+
+                // 스피커 끄기 설정이 체크되어 있으면 통화 볼륨을 0으로 설정
+                if (MainActivity.isSpeakerMuted) {
+                    audioManager.isSpeakerphoneOn = false
+                    audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0)
+                    Log.d(TAG, "스피커폰 끄기 및 통화 볼륨 0으로 설정 적용")
+                }
+
+                // 마이크 끄기 설정이 체크되어 있으면 마이크 음소거
+                if (MainActivity.isMicMuted) {
+                    audioManager.isMicrophoneMute = true
+                    Log.d(TAG, "마이크 음소거 적용")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "통화 중 오디오 음소거 적용 실패: ${e.message}", e)
+            }
+        }
+
+        /**
+         * 오디오 설정 복원 (중지 시 1회만 호출)
+         */
+        fun restoreAudioSettings(context: Context) {
+            if (!isAudioSettingsApplied) {
+                Log.d(TAG, "오디오 설정 적용된 적 없음 - 복원 건너뜀")
+                return
+            }
+
+            try {
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                if (audioManager == null) {
+                    Log.w(TAG, "AudioManager를 가져올 수 없음")
+                    return
+                }
+
+                Log.d(TAG, "========================================")
+                Log.d(TAG, "오디오 설정 복원 (중지)")
+                Log.d(TAG, "복원할 스피커폰 상태: $previousSpeakerphoneOn")
+                Log.d(TAG, "복원할 마이크 뮤트 상태: $previousMicMute")
+                Log.d(TAG, "복원할 통화 볼륨: $previousVoiceCallVolume")
+                Log.d(TAG, "========================================")
+
+                // 이전 상태로 복원
+                previousSpeakerphoneOn?.let { prev ->
+                    audioManager.isSpeakerphoneOn = prev
+                    Log.d(TAG, "스피커폰 상태 복원: $prev")
+                }
+
+                previousMicMute?.let { prev ->
+                    audioManager.isMicrophoneMute = prev
+                    Log.d(TAG, "마이크 뮤트 상태 복원: $prev")
+                }
+
+                previousVoiceCallVolume?.let { prev ->
+                    audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, prev, 0)
+                    Log.d(TAG, "통화 볼륨 복원: $prev")
+                }
+
+                // 복원 후 초기화
+                previousSpeakerphoneOn = null
+                previousMicMute = null
+                previousVoiceCallVolume = null
+                isAudioSettingsApplied = false
+            } catch (e: Exception) {
+                Log.e(TAG, "오디오 설정 복원 실패: ${e.message}", e)
+            }
+        }
 
         /**
          * 통화 타이머 설정
@@ -69,6 +201,8 @@ class PhoneStateReceiver : BroadcastReceiver() {
         fun setCurrentPhoneNumber(phoneNumber: String) {
             currentPhoneNumber = phoneNumber
             isCallConnected = false
+            isProcessingCallEnd = false
+            wasDisconnectedByUs = false
             offhookTime = 0
             connectedTime = 0
             callStartTime = System.currentTimeMillis()
@@ -106,11 +240,12 @@ class PhoneStateReceiver : BroadcastReceiver() {
             callEndedListener = null
             currentPhoneNumber = null
             isCallConnected = false
+            isProcessingCallEnd = false
+            wasDisconnectedByUs = false
             offhookTime = 0
             connectedTime = 0
             callStartTime = 0
-            previousSpeakerphoneOn = null
-            previousMicMute = null
+            // 오디오 관련 상태는 여기서 초기화하지 않음 (restoreAudioSettings에서 처리)
         }
     }
 
@@ -182,8 +317,8 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
         Log.d(TAG, "OFFHOOK 상태 (통화 연결됨): $currentPhoneNumber")
 
-        // 오디오 설정 적용 (스피커/마이크 끄기)
-        applyAudioSettings(context)
+        // 통화 중 오디오 음소거 적용 (OFFHOOK 시 매번)
+        applyCallAudioMute(context)
 
         // Context의 약한 참조 저장 (메모리 누수 방지)
         val contextRef = WeakReference(context)
@@ -192,6 +327,7 @@ class PhoneStateReceiver : BroadcastReceiver() {
         disconnectRunnable = Runnable {
             contextRef.get()?.let { ctx ->
                 Log.d(TAG, "${connectedDisconnectDelay/1000}초 경과, 전화 종료 시도: $currentPhoneNumber")
+                wasDisconnectedByUs = true  // 우리가 끊었음을 표시
                 disconnectCall(ctx)
             }
         }
@@ -202,6 +338,13 @@ class PhoneStateReceiver : BroadcastReceiver() {
      * 전화 종료 처리
      */
     private fun handleCallEnded(context: Context) {
+        // 중복 처리 방지
+        if (isProcessingCallEnd) {
+            Log.d(TAG, "이미 통화 종료 처리 중 - 중복 호출 무시")
+            return
+        }
+        isProcessingCallEnd = true
+
         // 타이머 정리
         disconnectRunnable?.let {
             handler.removeCallbacks(it)
@@ -213,35 +356,145 @@ class PhoneStateReceiver : BroadcastReceiver() {
             noAnswerRunnable = null
         }
 
-        // 오디오 설정 복원
-        restoreAudioSettings(context)
+        // 통화 종료 상태 분석을 위한 정보 저장
+        val phoneNumberForLog = currentPhoneNumber
+        val appMeasuredDuration = if (offhookTime > 0) System.currentTimeMillis() - offhookTime else 0L
+        val wasOffhookReached = offhookTime > 0
+        val disconnectedByUs = wasDisconnectedByUs  // 우리가 끊었는지 여부 저장
 
-        // 통화 종료 상태 기록
-        currentPhoneNumber?.let { number ->
-            val now = System.currentTimeMillis()
-
-            if (offhookTime > 0) {
-                // OFFHOOK 상태 도달 = 통화 연결됨
-                val callDuration = now - offhookTime
-
-                Log.d(TAG, "========================================")
-                Log.d(TAG, "통화 종료 분석: $number")
-                Log.d(TAG, "OFFHOOK 도달: ${offhookTime > 0}")
-                Log.d(TAG, "통화 시간: ${callDuration}ms")
-                Log.d(TAG, "========================================")
-
-                // OFFHOOK 도달 시 connected가 기록되었으므로 ended로 종료
-                ApiClient.recordCall(number, "ended")
-                Log.d(TAG, "✓ 정상 통화 종료: $number (통화 시간: ${callDuration}ms)")
-            } else {
-                // OFFHOOK에 도달하지 못했으면 전화 받지 않음
-                ApiClient.recordCall(number, "rejected")
-                Log.d(TAG, "✗ 전화 받지 않음: $number (OFFHOOK 도달 실패)")
-            }
-        }
+        Log.d(TAG, "========================================")
+        Log.d(TAG, "통화 종료: $phoneNumberForLog")
+        Log.d(TAG, "OFFHOOK 도달: $wasOffhookReached")
+        Log.d(TAG, "앱 측정 통화 시간: ${appMeasuredDuration}ms")
+        Log.d(TAG, "우리가 끊음: $disconnectedByUs")
+        Log.d(TAG, "CallLog 분석 대기 중... (1초 후)")
+        Log.d(TAG, "========================================")
 
         // 상태 초기화
         resetState()
+
+        // DisconnectCause 초기화
+        CallDisconnectListener.resetLastCause()
+
+        // CallLog 분석 후 상태 결정 (1초 후 - CallLog에 기록이 반영되는 시간 필요)
+        phoneNumberForLog?.let { number ->
+            handler.postDelayed({
+                analyzeAndDetermineCallStatus(context, number, appMeasuredDuration, wasOffhookReached, disconnectedByUs)
+            }, 1000)
+        } ?: run {
+            // 전화번호가 없으면 바로 다음 전화 진행
+            isProcessingCallEnd = false
+            callEndedListener?.onCallEnded()
+        }
+    }
+
+    /**
+     * CallLog 분석 후 통화 상태 결정
+     *
+     * 판단 기준:
+     * - wasOffhookReached: OFFHOOK 상태 도달 여부
+     * - callLogDuration: CallLog에 기록된 통화 시간
+     * - disconnectedByUs: 우리 타이머가 전화를 끊었는지 여부
+     *
+     * 로직:
+     * 1. OFFHOOK 미도달 → rejected
+     * 2. CallLog > 0 → ended (실제 통화)
+     * 3. CallLog = 0:
+     *    - 우리가 끊음 → no_answer (상대방 안 받음)
+     *    - 통신사가 끊음 → rejected (연결 실패)
+     */
+    private fun analyzeAndDetermineCallStatus(
+        context: Context,
+        phoneNumber: String,
+        appMeasuredDuration: Long,
+        wasOffhookReached: Boolean,
+        disconnectedByUs: Boolean
+    ) {
+        try {
+            Log.d(TAG, "========================================")
+            Log.d(TAG, "CallLog 기반 통화 상태 분석: $phoneNumber")
+            Log.d(TAG, "========================================")
+
+            val callLogs = CallLogAnalyzer.getRecentCallLog(context, phoneNumber, 1)
+
+            val status: String
+            val callLogDuration: Long
+
+            if (callLogs.isNotEmpty()) {
+                val entry = callLogs[0]
+                callLogDuration = entry.duration
+
+                CallLogAnalyzer.logCallEntry(entry)
+
+                Log.d(TAG, "----------------------------------------")
+                Log.d(TAG, "비교 분석:")
+                Log.d(TAG, "  CallLog duration: ${callLogDuration}초")
+                Log.d(TAG, "  앱 측정 duration: ${appMeasuredDuration}ms (${appMeasuredDuration / 1000}초)")
+                Log.d(TAG, "  OFFHOOK 도달: $wasOffhookReached")
+                Log.d(TAG, "  우리가 끊음: $disconnectedByUs")
+                Log.d(TAG, "----------------------------------------")
+
+                // 판단 로직
+                status = when {
+                    // OFFHOOK에 도달하지 못한 경우 = 전화 연결 안 됨
+                    !wasOffhookReached -> {
+                        Log.d(TAG, "✗ 전화 연결 안 됨: $phoneNumber (OFFHOOK 도달 실패)")
+                        "rejected"
+                    }
+                    // CallLog duration > 0 = 실제 통화 발생
+                    callLogDuration > 0 -> {
+                        Log.d(TAG, "✓ 정상 통화 종료: $phoneNumber")
+                        Log.d(TAG, "  → CallLog=${callLogDuration}초")
+                        "ended"
+                    }
+                    // CallLog duration = 0 + 우리가 끊음 = 상대방 안 받음
+                    callLogDuration == 0L && disconnectedByUs -> {
+                        Log.d(TAG, "✗ 상대방 안 받음 (타이머 종료): $phoneNumber")
+                        Log.d(TAG, "  → CallLog=0초, 우리가 끊음")
+                        "no_answer"
+                    }
+                    // CallLog duration = 0 + 통신사가 끊음 = 연결 실패
+                    callLogDuration == 0L && !disconnectedByUs -> {
+                        Log.d(TAG, "✗ 연결 실패 (통신사 종료): $phoneNumber")
+                        Log.d(TAG, "  → CallLog=0초, 앱=${appMeasuredDuration}ms, 통신사가 끊음")
+                        "rejected"
+                    }
+                    // 기타
+                    else -> {
+                        Log.d(TAG, "? 판단 불가: $phoneNumber")
+                        "rejected"
+                    }
+                }
+            } else {
+                Log.w(TAG, "CallLog에서 해당 번호의 통화 기록을 찾을 수 없음: $phoneNumber")
+
+                // CallLog가 없으면 disconnectedByUs로 판단
+                status = when {
+                    !wasOffhookReached -> "rejected"
+                    disconnectedByUs -> "no_answer"
+                    else -> "rejected"
+                }
+
+                Log.d(TAG, "판단 결과: $status")
+            }
+
+            Log.d(TAG, "========================================")
+            Log.d(TAG, "최종 판단: $status")
+            Log.d(TAG, "========================================")
+
+            // 서버에 통화 상태 기록
+            ApiClient.recordCall(phoneNumber, status)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "CallLog 분석 실패: ${e.message}", e)
+
+            // 예외 발생 시 기본값으로 처리
+            val fallbackStatus = if (wasOffhookReached) "ended" else "rejected"
+            ApiClient.recordCall(phoneNumber, fallbackStatus)
+        }
+
+        // 중복 처리 방지 플래그 초기화
+        isProcessingCallEnd = false
 
         // 다음 전화 걸기 콜백 호출
         callEndedListener?.onCallEnded()
@@ -365,82 +618,7 @@ class PhoneStateReceiver : BroadcastReceiver() {
         offhookTime = 0
         connectedTime = 0
         currentPhoneNumber = null
-        previousSpeakerphoneOn = null
-        previousMicMute = null
-    }
-
-    /**
-     * 오디오 설정 적용 (스피커/마이크 끄기)
-     */
-    private fun applyAudioSettings(context: Context) {
-        try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            if (audioManager == null) {
-                Log.w(TAG, "AudioManager를 가져올 수 없음")
-                return
-            }
-
-            // 현재 상태 저장 (복원용)
-            previousSpeakerphoneOn = audioManager.isSpeakerphoneOn
-            previousMicMute = audioManager.isMicrophoneMute
-
-            Log.d(TAG, "========================================")
-            Log.d(TAG, "오디오 설정 적용")
-            Log.d(TAG, "이전 스피커폰 상태: $previousSpeakerphoneOn")
-            Log.d(TAG, "이전 마이크 뮤트 상태: $previousMicMute")
-            Log.d(TAG, "스피커 끄기 설정: ${MainActivity.isSpeakerMuted}")
-            Log.d(TAG, "마이크 끄기 설정: ${MainActivity.isMicMuted}")
-            Log.d(TAG, "========================================")
-
-            // 스피커 끄기 설정이 체크되어 있으면 스피커폰 끄기
-            if (MainActivity.isSpeakerMuted) {
-                audioManager.isSpeakerphoneOn = false
-                Log.d(TAG, "스피커폰 끄기 적용")
-            }
-
-            // 마이크 끄기 설정이 체크되어 있으면 마이크 음소거
-            if (MainActivity.isMicMuted) {
-                audioManager.isMicrophoneMute = true
-                Log.d(TAG, "마이크 음소거 적용")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "오디오 설정 적용 실패: ${e.message}", e)
-        }
-    }
-
-    /**
-     * 오디오 설정 복원 (원래 상태로)
-     */
-    private fun restoreAudioSettings(context: Context) {
-        try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            if (audioManager == null) {
-                Log.w(TAG, "AudioManager를 가져올 수 없음")
-                return
-            }
-
-            Log.d(TAG, "========================================")
-            Log.d(TAG, "오디오 설정 복원")
-            Log.d(TAG, "복원할 스피커폰 상태: $previousSpeakerphoneOn")
-            Log.d(TAG, "복원할 마이크 뮤트 상태: $previousMicMute")
-            Log.d(TAG, "========================================")
-
-            // 이전 상태로 복원
-            previousSpeakerphoneOn?.let { prev ->
-                audioManager.isSpeakerphoneOn = prev
-                Log.d(TAG, "스피커폰 상태 복원: $prev")
-            }
-
-            previousMicMute?.let { prev ->
-                audioManager.isMicrophoneMute = prev
-                Log.d(TAG, "마이크 뮤트 상태 복원: $prev")
-            }
-
-            // 복원 후 초기화
-            previousSpeakerphoneOn = null
-            previousMicMute = null
-        } catch (e: Exception) {
-            Log.e(TAG, "오디오 설정 복원 실패: ${e.message}", e)
-        }
+        wasDisconnectedByUs = false
+        // 오디오 관련 상태는 여기서 초기화하지 않음 (시작/중지 시에만 처리)
     }
 }

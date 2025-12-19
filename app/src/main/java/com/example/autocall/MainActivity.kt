@@ -149,6 +149,9 @@ class MainActivity : AppCompatActivity() {
         // SMS ContentObserver 등록
         registerSmsContentObserver()
 
+        // DisconnectCause 리스너 등록
+        CallDisconnectListener.register(this)
+
         // SMS 수신 BroadcastReceiver 등록
         val filter = IntentFilter(ACTION_SMS_RECEIVED)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -211,6 +214,73 @@ class MainActivity : AppCompatActivity() {
 
         // 앱 실행 시 자동 시작 기능 중지 (사용자가 시작 버튼을 눌러야 시작됨)
         // autoStartIfReady() 제거됨
+
+        // 테스트: 특정 번호의 CallLog 분석 (권한 확인 후 실행)
+        handler.postDelayed({
+            testCallLogAnalysis()
+        }, 2000)
+    }
+
+    /**
+     * CallLog 분석 테스트 (없는 번호: 01093647941)
+     */
+    private fun testCallLogAnalysis() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG)
+            != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "READ_CALL_LOG 권한이 없어서 CallLog 분석을 수행할 수 없습니다")
+            return
+        }
+
+        Log.d(TAG, "")
+        Log.d(TAG, "╔════════════════════════════════════════════════════════════╗")
+        Log.d(TAG, "║          CallLog 분석 테스트 시작                          ║")
+        Log.d(TAG, "║          최근 발신 통화 10건 분석                          ║")
+        Log.d(TAG, "╚════════════════════════════════════════════════════════════╝")
+        Log.d(TAG, "")
+
+        // 최근 발신 통화 기록 10건 조회
+        val allLogs = CallLogAnalyzer.getAllRecentCallLogs(this, 10)
+
+        if (allLogs.isEmpty()) {
+            Log.w(TAG, "통화 기록이 없습니다.")
+        } else {
+            Log.d(TAG, "최근 통화 기록 ${allLogs.size}건:")
+            Log.d(TAG, "")
+
+            allLogs.forEach { entry ->
+                logCallEntryDetails(entry)
+                val result = CallLogAnalyzer.analyzeCallResult(entry)
+                Log.d(TAG, "★ 분석 결과: $result")
+                Log.d(TAG, "")
+            }
+        }
+
+        Log.d(TAG, "╔════════════════════════════════════════════════════════════╗")
+        Log.d(TAG, "║          CallLog 분석 테스트 완료                          ║")
+        Log.d(TAG, "╚════════════════════════════════════════════════════════════╝")
+        Log.d(TAG, "")
+    }
+
+    /**
+     * CallLog 엔트리 상세 정보 출력 (MainActivity 태그로)
+     */
+    private fun logCallEntryDetails(entry: CallLogAnalyzer.CallLogEntry) {
+        val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+            .format(java.util.Date(entry.date))
+
+        Log.d(TAG, "┌────────────────────────────────────────")
+        Log.d(TAG, "│ ID: ${entry.id}")
+        Log.d(TAG, "│ 번호: ${entry.number}")
+        Log.d(TAG, "│ 유형: ${entry.typeName}")
+        Log.d(TAG, "│ 시간: $dateStr")
+        Log.d(TAG, "│ 통화시간: ${entry.duration}초")
+        Log.d(TAG, "│ 새 통화: ${entry.isNew}")
+        Log.d(TAG, "│ 저장된 이름: ${entry.cachedName ?: "없음"}")
+        Log.d(TAG, "│ 번호 유형: ${entry.cachedNumberType}")
+        Log.d(TAG, "│ 국가: ${entry.countryIso ?: "없음"}")
+        Log.d(TAG, "│ 위치: ${entry.geocodedLocation ?: "없음"}")
+        Log.d(TAG, "│ 기능(features): ${entry.features}")
+        Log.d(TAG, "└────────────────────────────────────────")
     }
 
     /**
@@ -285,6 +355,9 @@ class MainActivity : AppCompatActivity() {
         phoneNumberQueue.clear()
         totalPhoneNumbersProcessed = 0
         currentBatchSize = 0
+
+        // 오디오 설정 적용 (시작 시 1회)
+        PhoneStateReceiver.applyAudioSettings(this)
 
         // 시작 버튼을 중지 버튼으로 변경
         updateStartStopButton()
@@ -364,6 +437,9 @@ class MainActivity : AppCompatActivity() {
         // 진행 중인 전화 종료
         isAutoCalling = false
 
+        // 오디오 설정 복원 (중지 시 1회)
+        PhoneStateReceiver.restoreAudioSettings(this)
+
         // 종료 시간 체크 중단
         endTimeCheckRunnable?.let {
             handler.removeCallbacks(it)
@@ -403,6 +479,9 @@ class MainActivity : AppCompatActivity() {
 
         // 진행 중인 전화 종료 플래그 설정 (현재 진행중인 번호까지만 처리)
         isAutoCalling = false
+
+        // 오디오 설정 복원 (중지 시 1회)
+        PhoneStateReceiver.restoreAudioSettings(this)
 
         // 종료 시간 체크 중단
         endTimeCheckRunnable?.let {
@@ -479,6 +558,7 @@ class MainActivity : AppCompatActivity() {
                         ).show()
                         updateStatus("대기 중", totalPhoneNumbersProcessed, totalPhoneNumbersProcessed)
                         isAutoCalling = false
+                        PhoneStateReceiver.restoreAudioSettings(this@MainActivity)
                         updateStartStopButton()
                     }
                 }
@@ -494,6 +574,7 @@ class MainActivity : AppCompatActivity() {
                         Toast.LENGTH_LONG
                     ).show()
                     isAutoCalling = false
+                    PhoneStateReceiver.restoreAudioSettings(this@MainActivity)
                     updateStartStopButton()
                 }
             }
@@ -547,6 +628,7 @@ class MainActivity : AppCompatActivity() {
         permissions.add(Manifest.permission.READ_SMS)
         permissions.add(Manifest.permission.READ_CONTACTS)
         permissions.add(Manifest.permission.ANSWER_PHONE_CALLS)
+        permissions.add(Manifest.permission.READ_CALL_LOG)
 
         // Android 13+ (API 33) 알림 권한 추가
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -747,6 +829,7 @@ class MainActivity : AppCompatActivity() {
         permissions.add(Manifest.permission.READ_SMS)
         permissions.add(Manifest.permission.READ_CONTACTS)
         permissions.add(Manifest.permission.ANSWER_PHONE_CALLS)
+        permissions.add(Manifest.permission.READ_CALL_LOG)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -849,10 +932,14 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         dbHelper.close()
         handler.removeCallbacksAndMessages(null)
+        // 오디오 설정 복원 (앱 종료 시 안전장치)
+        PhoneStateReceiver.restoreAudioSettings(this)
         // PhoneStateReceiver 리스너 및 타이머 정리 (메모리 누수 방지)
         PhoneStateReceiver.cleanup()
         // ApiClient ExecutorService 종료
         ApiClient.shutdown()
+        // DisconnectCause 리스너 해제
+        CallDisconnectListener.unregister()
         // SMS/MMS ContentObserver 등록 해제
         unregisterSmsContentObserver()
         // SMS 수신 BroadcastReceiver 등록 해제

@@ -162,21 +162,24 @@ GET /api/phone-numbers
 POST /api/call-record
 본문: {
   "phoneNumber": "01012345678",
-  "status": "started|dialing|connected|ended|invalid_number|busy|no_answer|failed",
+  "status": "started|connected|ended|no_answer|rejected|failed",
   "timestamp": 1234567890
 }
 
 통화 상태 설명:
 - started: 전화 걸기 시작
-- dialing: 다이얼링 시작 (OFFHOOK 도달)
-- connected: 실제 통화 연결 (12초 이상 지속)
-- ended: 정상 통화 종료
-- invalid_number: 없는 번호/통신사 안내 (12초 이내 종료)
-- busy: 통화 중/기타 (12초~30초 사이)
-- no_answer: 연결 실패 (OFFHOOK 미도달)
+- connected: OFFHOOK 상태 도달 (다이얼링/통화 시작)
+- ended: 정상 통화 종료 (CallLog duration > 0)
+- no_answer: 상대방 안 받음 (타이머에 의해 우리가 끊음, CallLog=0)
+- rejected: 연결 실패 (OFFHOOK 미도달 또는 통신사가 끊음)
 - failed: 전화 걸기 실패 (Exception)
 
-참고: 12초 기준은 통신사 안내 멘트(약 5~10초)와 실제 통화를 구분하기 위함
+판단 로직:
+1. OFFHOOK 미도달 → rejected
+2. CallLog duration > 0 → ended (실제 통화 발생)
+3. CallLog duration = 0:
+   - 우리 타이머가 끊음 → no_answer (상대방 안 받음)
+   - 통신사가 끊음 → rejected (연결 실패)
 
 POST /api/sms-record
 본문: { "phoneNumber": "01012345678", "message": "SMS 내용", "timestamp": 1234567890 }
