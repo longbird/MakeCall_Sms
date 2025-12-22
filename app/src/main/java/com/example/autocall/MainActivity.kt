@@ -2,14 +2,17 @@ package com.example.autocall
 
 import android.Manifest
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import android.widget.Button
@@ -72,6 +75,50 @@ class MainActivity : AppCompatActivity() {
     // SMS ContentObserver (BroadcastReceiver 대체)
     private var smsContentObserver: SmsContentObserver? = null
     private var isObserverRegistered = false
+
+    // AutoCallService 바인딩
+    private var autoCallService: AutoCallService? = null
+    private var isServiceBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as AutoCallService.LocalBinder
+            autoCallService = binder.getService()
+            isServiceBound = true
+            Log.d(TAG, "AutoCallService 바인딩됨")
+
+            // Service 콜백 설정
+            autoCallService?.setCallback(object : AutoCallService.ServiceCallback {
+                override fun onStatusChanged(status: String, current: Int, total: Int, phoneNumber: String?) {
+                    runOnUiThread {
+                        updateStatus(status, current, total, phoneNumber)
+                    }
+                }
+
+                override fun onServiceStopped() {
+                    runOnUiThread {
+                        isAutoCalling = false
+                        updateStartStopButton()
+                        Toast.makeText(this@MainActivity, "자동 전화 서비스가 종료되었습니다", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            })
+
+            // Service가 실행 중이면 UI 업데이트
+            if (AutoCallService.isRunning) {
+                isAutoCalling = true
+                updateStartStopButton()
+                val (current, total, phoneNumber) = autoCallService!!.getProgress()
+                updateStatus("진행 중", current, total, phoneNumber)
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            autoCallService = null
+            isServiceBound = false
+            Log.d(TAG, "AutoCallService 바인딩 해제됨")
+        }
+    }
 
     // SMS 수신 BroadcastReceiver
     private val smsUpdateReceiver = object : BroadcastReceiver() {
@@ -202,15 +249,14 @@ class MainActivity : AppCompatActivity() {
         // 앱 시작시 SMS 이력 로드
         loadSmsHistory()
 
-        // PhoneStateReceiver에 전화 종료 리스너 설정
-        PhoneStateReceiver.setOnCallEndedListener(object : PhoneStateReceiver.Companion.OnCallEndedListener {
-            override fun onCallEnded() {
-                // 전화가 끝나면 다음 전화 걸기
-                runOnUiThread {
-                    processNextPhoneCall()
-                }
-            }
-        })
+        // Service가 이미 실행 중인지 확인하고 바인딩
+        bindAutoCallService()
+
+        // Service가 실행 중이면 UI 업데이트
+        if (AutoCallService.isRunning) {
+            isAutoCalling = true
+            updateStartStopButton()
+        }
 
         // 앱 실행 시 자동 시작 기능 중지 (사용자가 시작 버튼을 눌러야 시작됨)
         // autoStartIfReady() 제거됨
@@ -315,7 +361,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 자동 전화 프로세스 시작
+     * 자동 전화 프로세스 시작 (Service로 위임)
      */
     private fun startAutoCallProcess() {
         Log.d(TAG, "startAutoCallProcess() 호출됨")
@@ -336,40 +382,76 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // API 클라이언트 주소 설정
-        ApiClient.setBaseUrl(serverAddress)
-        Log.d(TAG, "ApiClient에 서버 주소 설정 완료")
-
-        if (isAutoCalling) {
+        if (isAutoCalling || AutoCallService.isRunning) {
             Toast.makeText(this, "이미 자동 전화가 진행 중입니다", Toast.LENGTH_SHORT).show()
             Log.w(TAG, "이미 자동 전화 진행 중")
             return
         }
 
+        // 타이머 및 설정값 읽기
+        val callTimeout = etCallTimeout.text.toString().toIntOrNull() ?: 30
+        val callDuration = etCallDuration.text.toString().toIntOrNull() ?: 20
+        val phoneNumberLimit = etPhoneNumberLimit.text.toString().toIntOrNull() ?: 10
+        val endTime = etEndTime.text.toString().trim()
+
         Log.d(TAG, "========================================")
-        Log.d(TAG, "자동 전화 프로세스 시작!")
+        Log.d(TAG, "Foreground Service로 자동 전화 시작!")
         Log.d(TAG, "서버: $serverAddress")
+        Log.d(TAG, "전화 시도: ${callTimeout}초, 대기: ${callDuration}초")
+        Log.d(TAG, "전화번호 개수: $phoneNumberLimit")
+        Log.d(TAG, "종료 시간: $endTime")
         Log.d(TAG, "========================================")
+
+        // 서버 주소 저장
+        saveServerAddress(serverAddress)
 
         isAutoCalling = true
-        phoneNumberQueue.clear()
-        totalPhoneNumbersProcessed = 0
-        currentBatchSize = 0
-
-        // 오디오 설정 적용 (시작 시 1회)
-        PhoneStateReceiver.applyAudioSettings(this)
-
-        // 시작 버튼을 중지 버튼으로 변경
         updateStartStopButton()
+        updateStatus("서비스 시작 중...")
 
-        // 진행 상황 표시
-        updateStatus("전화번호 가져오는 중...")
+        // Foreground Service 시작
+        val serviceIntent = Intent(this, AutoCallService::class.java).apply {
+            action = AutoCallService.ACTION_START
+            putExtra(AutoCallService.EXTRA_SERVER_ADDRESS, serverAddress)
+            putExtra(AutoCallService.EXTRA_CALL_TIMEOUT, callTimeout)
+            putExtra(AutoCallService.EXTRA_CALL_DURATION, callDuration)
+            putExtra(AutoCallService.EXTRA_PHONE_NUMBER_LIMIT, phoneNumberLimit)
+            putExtra(AutoCallService.EXTRA_END_TIME, endTime)
+            putExtra(AutoCallService.EXTRA_MUTE_SPEAKER, cbMuteSpeaker.isChecked)
+            putExtra(AutoCallService.EXTRA_MUTE_MIC, cbMuteMic.isChecked)
+        }
 
-        // 종료 시간 체크 시작
-        startEndTimeCheck()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
 
-        // 전화번호 가져오기 시작
-        fetchMorePhoneNumbers()
+        // Service 바인딩
+        bindAutoCallService()
+
+        Toast.makeText(this, "자동 전화 서비스가 시작되었습니다", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * AutoCallService 바인딩
+     */
+    private fun bindAutoCallService() {
+        if (!isServiceBound) {
+            val intent = Intent(this, AutoCallService::class.java)
+            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+    }
+
+    /**
+     * AutoCallService 언바인딩
+     */
+    private fun unbindAutoCallService() {
+        if (isServiceBound) {
+            autoCallService?.setCallback(null)
+            unbindService(serviceConnection)
+            isServiceBound = false
+        }
     }
 
     /**
@@ -472,45 +554,26 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * 자동 전화 프로세스 수동 중지 (사용자가 중지 버튼을 눌렀을 때)
-     * 현재 진행중인 번호까지만 처리하고 중지
+     * Service에 중지 요청
      */
     private fun stopAutoCallProcessManually() {
         Log.d(TAG, "자동 전화 프로세스 수동 중지 시작")
 
-        // 진행 중인 전화 종료 플래그 설정 (현재 진행중인 번호까지만 처리)
-        isAutoCalling = false
-
-        // 오디오 설정 복원 (중지 시 1회)
-        PhoneStateReceiver.restoreAudioSettings(this)
-
-        // 종료 시간 체크 중단
-        endTimeCheckRunnable?.let {
-            handler.removeCallbacks(it)
-            endTimeCheckRunnable = null
-        }
-
-        // 남아있는 전화번호들을 서버에 reset-number API로 리셋 요청
-        val remainingNumbers = phoneNumberQueue.toList()
-        phoneNumberQueue.clear()
-
-        if (remainingNumbers.isNotEmpty()) {
-            Log.d(TAG, "남은 전화번호 ${remainingNumbers.size}개를 reset-number API로 리셋 요청")
-            for (phoneNumber in remainingNumbers) {
-                ApiClient.resetNumber(phoneNumber)
+        // Service에 중지 요청
+        if (isServiceBound && autoCallService != null) {
+            autoCallService?.requestStop()
+        } else {
+            // Service에 직접 중지 Intent 전송
+            val stopIntent = Intent(this, AutoCallService::class.java).apply {
+                action = AutoCallService.ACTION_STOP
             }
+            startService(stopIntent)
         }
 
-        runOnUiThread {
-            updateStartStopButton()
-            updateStatus("중지됨", totalPhoneNumbersProcessed, currentBatchSize)
-            Toast.makeText(
-                this,
-                "작업을 중지했습니다. 남은 번호 ${remainingNumbers.size}개는 초기화되었습니다.",
-                Toast.LENGTH_LONG
-            ).show()
-        }
+        isAutoCalling = false
+        updateStartStopButton()
 
-        Log.d(TAG, "자동 전화 프로세스 수동 중지 완료")
+        Log.d(TAG, "자동 전화 프로세스 수동 중지 요청 완료")
     }
 
     /**
@@ -930,18 +993,20 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.d(TAG, "MainActivity onDestroy()")
+
         dbHelper.close()
         handler.removeCallbacksAndMessages(null)
-        // 오디오 설정 복원 (앱 종료 시 안전장치)
-        PhoneStateReceiver.restoreAudioSettings(this)
-        // PhoneStateReceiver 리스너 및 타이머 정리 (메모리 누수 방지)
-        PhoneStateReceiver.cleanup()
-        // ApiClient ExecutorService 종료
-        ApiClient.shutdown()
+
+        // Service 언바인딩 (Service는 계속 실행됨)
+        unbindAutoCallService()
+
         // DisconnectCause 리스너 해제
         CallDisconnectListener.unregister()
+
         // SMS/MMS ContentObserver 등록 해제
         unregisterSmsContentObserver()
+
         // SMS 수신 BroadcastReceiver 등록 해제
         try {
             unregisterReceiver(smsUpdateReceiver)
@@ -949,8 +1014,17 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "BroadcastReceiver 등록 해제 실패: ${e.message}")
         }
-        isAutoCalling = false
-        phoneNumberQueue.clear()
+
+        // 주의: Service가 실행 중이면 isAutoCalling, phoneNumberQueue를 초기화하지 않음
+        // Service가 독립적으로 동작하므로 Activity가 종료되어도 계속 실행됨
+        if (!AutoCallService.isRunning) {
+            isAutoCalling = false
+            phoneNumberQueue.clear()
+            // 오디오 설정 복원 (Service가 없을 때만)
+            PhoneStateReceiver.restoreAudioSettings(this)
+            PhoneStateReceiver.cleanup()
+            ApiClient.shutdown()
+        }
     }
 
     /**

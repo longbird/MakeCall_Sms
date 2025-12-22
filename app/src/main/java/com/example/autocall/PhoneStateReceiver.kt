@@ -47,7 +47,8 @@ class PhoneStateReceiver : BroadcastReceiver() {
         private var isAudioSettingsApplied = false
 
         /**
-         * 오디오 설정 초기화 (시작 시 1회 - 원래 상태 저장)
+         * 오디오 설정 초기화 (시작 시 1회 - 원래 상태 저장 및 즉시 음소거 적용)
+         * 발신음을 들리지 않게 하려면 전화 걸기 전에 볼륨을 0으로 설정해야 함
          */
         fun applyAudioSettings(context: Context) {
             if (isAudioSettingsApplied) {
@@ -75,6 +76,18 @@ class PhoneStateReceiver : BroadcastReceiver() {
                 Log.d(TAG, "스피커 끄기 설정: ${MainActivity.isSpeakerMuted}")
                 Log.d(TAG, "마이크 끄기 설정: ${MainActivity.isMicMuted}")
                 Log.d(TAG, "========================================")
+
+                // 발신음을 들리지 않게 하기 위해 시작 시 바로 볼륨 0으로 설정
+                if (MainActivity.isSpeakerMuted) {
+                    audioManager.isSpeakerphoneOn = false
+                    audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0)
+                    Log.d(TAG, "시작 시 통화 볼륨 0으로 설정 (발신음 제거)")
+                }
+
+                if (MainActivity.isMicMuted) {
+                    audioManager.isMicrophoneMute = true
+                    Log.d(TAG, "시작 시 마이크 음소거 적용")
+                }
 
                 isAudioSettingsApplied = true
             } catch (e: Exception) {
