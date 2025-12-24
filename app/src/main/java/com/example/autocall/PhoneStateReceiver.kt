@@ -9,6 +9,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.telecom.Call
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import android.util.Log
@@ -30,7 +31,15 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
         // 타이머 설정 (동적으로 변경 가능)
         private var noAnswerTimeout = 30000L // 30초 (연결 대기 시간) - 기본값
-        private var connectedDisconnectDelay = 20000L // 20초 (통화 연결 후 자동 종료) - 기본값
+        private var connectedDisconnectDelay = 5000L // 5초 (통화 연결 후 자동 종료) - 기본값
+
+        // 실제 통화 연결 감지를 위한 변수
+        private var audioCheckRunnable: Runnable? = null
+        private var realConnectionTime: Long = 0 // 실제 통화 연결 시간 (InCallService 또는 AudioManager로 감지)
+        private var isReallyConnected = false // 실제 통화 연결 여부
+
+        // InCallService 사용 여부 (기본 전화 앱으로 설정되면 true)
+        private var useInCallService = false
 
         private var callEndedListener: OnCallEndedListener? = null
 
@@ -44,6 +53,9 @@ class PhoneStateReceiver : BroadcastReceiver() {
         private var previousSpeakerphoneOn: Boolean? = null
         private var previousMicMute: Boolean? = null
         private var previousVoiceCallVolume: Int? = null
+        private var previousRingVolume: Int? = null
+        private var previousSystemVolume: Int? = null
+        private var previousMusicVolume: Int? = null
         private var isAudioSettingsApplied = false
 
         /**
@@ -67,21 +79,31 @@ class PhoneStateReceiver : BroadcastReceiver() {
                 previousSpeakerphoneOn = audioManager.isSpeakerphoneOn
                 previousMicMute = audioManager.isMicrophoneMute
                 previousVoiceCallVolume = audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+                previousRingVolume = audioManager.getStreamVolume(AudioManager.STREAM_RING)
+                previousSystemVolume = audioManager.getStreamVolume(AudioManager.STREAM_SYSTEM)
+                previousMusicVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
 
                 Log.d(TAG, "========================================")
                 Log.d(TAG, "오디오 원래 상태 저장 (시작)")
                 Log.d(TAG, "이전 스피커폰 상태: $previousSpeakerphoneOn")
                 Log.d(TAG, "이전 마이크 뮤트 상태: $previousMicMute")
                 Log.d(TAG, "이전 통화 볼륨: $previousVoiceCallVolume")
+                Log.d(TAG, "이전 벨소리 볼륨: $previousRingVolume")
+                Log.d(TAG, "이전 시스템 볼륨: $previousSystemVolume")
+                Log.d(TAG, "이전 미디어 볼륨: $previousMusicVolume")
                 Log.d(TAG, "스피커 끄기 설정: ${MainActivity.isSpeakerMuted}")
                 Log.d(TAG, "마이크 끄기 설정: ${MainActivity.isMicMuted}")
                 Log.d(TAG, "========================================")
 
-                // 발신음을 들리지 않게 하기 위해 시작 시 바로 볼륨 0으로 설정
+                // 발신음을 들리지 않게 하기 위해 시작 시 바로 모든 볼륨 0으로 설정
                 if (MainActivity.isSpeakerMuted) {
                     audioManager.isSpeakerphoneOn = false
+                    // 모든 오디오 스트림 볼륨을 0으로 설정 (발신음 완전 제거)
                     audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0)
-                    Log.d(TAG, "시작 시 통화 볼륨 0으로 설정 (발신음 제거)")
+                    audioManager.setStreamVolume(AudioManager.STREAM_RING, 0, 0)
+                    audioManager.setStreamVolume(AudioManager.STREAM_SYSTEM, 0, 0)
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+                    Log.d(TAG, "시작 시 모든 볼륨 0으로 설정 (발신음 제거)")
                 }
 
                 if (MainActivity.isMicMuted) {
@@ -117,11 +139,14 @@ class PhoneStateReceiver : BroadcastReceiver() {
                 Log.d(TAG, "마이크 끄기 설정: ${MainActivity.isMicMuted}")
                 Log.d(TAG, "========================================")
 
-                // 스피커 끄기 설정이 체크되어 있으면 통화 볼륨을 0으로 설정
+                // 스피커 끄기 설정이 체크되어 있으면 모든 볼륨을 0으로 설정
                 if (MainActivity.isSpeakerMuted) {
                     audioManager.isSpeakerphoneOn = false
                     audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, 0, 0)
-                    Log.d(TAG, "스피커폰 끄기 및 통화 볼륨 0으로 설정 적용")
+                    audioManager.setStreamVolume(AudioManager.STREAM_RING, 0, 0)
+                    audioManager.setStreamVolume(AudioManager.STREAM_SYSTEM, 0, 0)
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+                    Log.d(TAG, "스피커폰 끄기 및 모든 볼륨 0으로 설정 적용")
                 }
 
                 // 마이크 끄기 설정이 체크되어 있으면 마이크 음소거
@@ -155,6 +180,9 @@ class PhoneStateReceiver : BroadcastReceiver() {
                 Log.d(TAG, "복원할 스피커폰 상태: $previousSpeakerphoneOn")
                 Log.d(TAG, "복원할 마이크 뮤트 상태: $previousMicMute")
                 Log.d(TAG, "복원할 통화 볼륨: $previousVoiceCallVolume")
+                Log.d(TAG, "복원할 벨소리 볼륨: $previousRingVolume")
+                Log.d(TAG, "복원할 시스템 볼륨: $previousSystemVolume")
+                Log.d(TAG, "복원할 미디어 볼륨: $previousMusicVolume")
                 Log.d(TAG, "========================================")
 
                 // 이전 상태로 복원
@@ -173,10 +201,28 @@ class PhoneStateReceiver : BroadcastReceiver() {
                     Log.d(TAG, "통화 볼륨 복원: $prev")
                 }
 
+                previousRingVolume?.let { prev ->
+                    audioManager.setStreamVolume(AudioManager.STREAM_RING, prev, 0)
+                    Log.d(TAG, "벨소리 볼륨 복원: $prev")
+                }
+
+                previousSystemVolume?.let { prev ->
+                    audioManager.setStreamVolume(AudioManager.STREAM_SYSTEM, prev, 0)
+                    Log.d(TAG, "시스템 볼륨 복원: $prev")
+                }
+
+                previousMusicVolume?.let { prev ->
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, prev, 0)
+                    Log.d(TAG, "미디어 볼륨 복원: $prev")
+                }
+
                 // 복원 후 초기화
                 previousSpeakerphoneOn = null
                 previousMicMute = null
                 previousVoiceCallVolume = null
+                previousRingVolume = null
+                previousSystemVolume = null
+                previousMusicVolume = null
                 isAudioSettingsApplied = false
             } catch (e: Exception) {
                 Log.e(TAG, "오디오 설정 복원 실패: ${e.message}", e)
@@ -242,6 +288,9 @@ class PhoneStateReceiver : BroadcastReceiver() {
          * 리스너 및 타이머 정리 (메모리 누수 방지)
          */
         fun cleanup() {
+            // InCallService 리스너 해제
+            unregisterInCallServiceListener()
+
             disconnectRunnable?.let {
                 handler.removeCallbacks(it)
                 disconnectRunnable = null
@@ -250,15 +299,169 @@ class PhoneStateReceiver : BroadcastReceiver() {
                 handler.removeCallbacks(it)
                 noAnswerRunnable = null
             }
+            audioCheckRunnable?.let {
+                handler.removeCallbacks(it)
+                audioCheckRunnable = null
+            }
             callEndedListener = null
             currentPhoneNumber = null
             isCallConnected = false
+            isReallyConnected = false
             isProcessingCallEnd = false
             wasDisconnectedByUs = false
+            useInCallService = false
             offhookTime = 0
             connectedTime = 0
+            realConnectionTime = 0
             callStartTime = 0
             // 오디오 관련 상태는 여기서 초기화하지 않음 (restoreAudioSettings에서 처리)
+        }
+
+        // Context를 저장하여 onCallActive에서 전화 끊기에 사용
+        private var contextRef: WeakReference<Context>? = null
+
+        /**
+         * InCallService 리스너 등록 (기본 전화 앱으로 설정된 경우)
+         */
+        fun registerInCallServiceListener(context: Context) {
+            contextRef = WeakReference(context)
+
+            MyInCallService.setCallStateListener(object : MyInCallService.Companion.CallStateListener {
+                override fun onCallStateChanged(state: Int, stateName: String) {
+                    Log.d(TAG, "InCallService 통화 상태 변경: $stateName ($state)")
+                }
+
+                override fun onCallActive() {
+                    // ★★★ InCallService에서 상대방이 전화를 받았다고 알려줌 ★★★
+                    if (!isReallyConnected && isCallConnected) {
+                        Log.d(TAG, "╔════════════════════════════════════════════════════════════╗")
+                        Log.d(TAG, "║  ★★★ InCallService: 상대방이 전화를 받았습니다! ★★★      ║")
+                        Log.d(TAG, "║  전화번호: $currentPhoneNumber")
+                        Log.d(TAG, "║  ${connectedDisconnectDelay/1000}초 후 자동 종료 예정")
+                        Log.d(TAG, "╚════════════════════════════════════════════════════════════╝")
+
+                        isReallyConnected = true
+                        realConnectionTime = System.currentTimeMillis()
+                        connectedTime = realConnectionTime
+                        useInCallService = true
+
+                        // 서버에 connected 상태 전송
+                        currentPhoneNumber?.let {
+                            ApiClient.recordCall(it, "connected")
+                        }
+
+                        // AudioManager 체크 중단
+                        audioCheckRunnable?.let {
+                            handler.removeCallbacks(it)
+                            audioCheckRunnable = null
+                        }
+
+                        // 기존 타이머 취소
+                        disconnectRunnable?.let {
+                            handler.removeCallbacks(it)
+                        }
+                        noAnswerRunnable?.let {
+                            handler.removeCallbacks(it)
+                        }
+
+                        // 실제 연결 후 설정된 시간 후 자동 종료
+                        disconnectRunnable = Runnable {
+                            Log.d(TAG, "★ InCallService: 통화 ${connectedDisconnectDelay/1000}초 경과, 전화 종료: $currentPhoneNumber")
+                            wasDisconnectedByUs = true
+                            // Context를 사용하여 전화 끊기
+                            contextRef?.get()?.let { ctx ->
+                                disconnectCall(ctx)
+                            } ?: run {
+                                Log.e(TAG, "Context가 없어서 전화를 끊을 수 없습니다")
+                            }
+                        }
+                        handler.postDelayed(disconnectRunnable!!, connectedDisconnectDelay)
+                    }
+                }
+
+                override fun onCallDisconnected(disconnectCause: Int) {
+                    Log.d(TAG, "InCallService 통화 종료: 원인코드=$disconnectCause")
+                }
+            })
+
+            useInCallService = true
+            Log.d(TAG, "InCallService 리스너 등록됨 (connectedDisconnectDelay: ${connectedDisconnectDelay}ms)")
+        }
+
+        /**
+         * InCallService 리스너 해제
+         */
+        fun unregisterInCallServiceListener() {
+            MyInCallService.setCallStateListener(null)
+            MyInCallService.reset()
+            useInCallService = false
+            Log.d(TAG, "InCallService 리스너 해제됨")
+        }
+
+        /**
+         * 기본 전화 앱 여부 확인 및 InCallService 리스너 등록
+         */
+        fun checkAndRegisterInCallService(context: Context) {
+            val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+            val isDefaultDialer = telecomManager?.defaultDialerPackage == context.packageName
+
+            if (isDefaultDialer) {
+                Log.d(TAG, "기본 전화 앱으로 설정됨 - InCallService 사용")
+                registerInCallServiceListener(context)
+            } else {
+                Log.d(TAG, "기본 전화 앱 아님 - 정확한 통화 연결 감지 불가")
+                useInCallService = false
+            }
+        }
+
+        /**
+         * 전화 자동 끊기 (정적 함수)
+         * 주의: Android 9+ 에서는 기본 전화 앱이 아니면 endCall()이 작동하지 않음
+         */
+        fun disconnectCall(context: Context) {
+            try {
+                // Android 9 (API 28) 이상
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                    if (telecomManager != null &&
+                        ActivityCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ANSWER_PHONE_CALLS
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        val success = telecomManager.endCall()
+                        if (success) {
+                            Log.d(TAG, "TelecomManager를 사용하여 전화 종료 성공: $currentPhoneNumber")
+                        } else {
+                            Log.w(TAG, "TelecomManager.endCall() 실패 - 기본 전화 앱이 아닐 수 있음")
+                        }
+                        return
+                    } else {
+                        Log.w(TAG, "ANSWER_PHONE_CALLS 권한 없음")
+                    }
+                }
+
+                // Android 8.1 이하에서 Reflection 시도 (deprecated, 작동 안 할 수 있음)
+                val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+                if (telephonyManager != null) {
+                    try {
+                        val telephonyClass = Class.forName(telephonyManager.javaClass.name)
+                        val endCallMethod = telephonyClass.getDeclaredMethod("endCall")
+                        endCallMethod.isAccessible = true
+                        endCallMethod.invoke(telephonyManager)
+                        Log.d(TAG, "Reflection을 사용하여 전화 종료: $currentPhoneNumber")
+                    } catch (e: NoSuchMethodException) {
+                        Log.w(TAG, "endCall 메서드를 찾을 수 없음 (Android 버전에서 지원 안 함)")
+                    } catch (e: SecurityException) {
+                        Log.w(TAG, "전화 끊기 권한 거부됨")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "전화 끊기 실패: ${e.message}", e)
+            }
+
+            // 모든 시도가 실패했을 때의 로그
+            Log.w(TAG, "자동 전화 종료 실패. 사용자가 수동으로 종료해야 할 수 있음.")
         }
     }
 
@@ -305,7 +508,8 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
     /**
      * 전화 연결 처리 (OFFHOOK 상태)
-     * OFFHOOK 상태 도달 = 통화 연결로 간주
+     * OFFHOOK = 발신 시작 (다이얼링)
+     * 실제 통화 연결은 AudioManager.MODE_IN_CALL로 감지
      */
     private fun handleCallConnected(context: Context) {
         if (offhookTime > 0) {
@@ -320,15 +524,21 @@ class PhoneStateReceiver : BroadcastReceiver() {
             noAnswerRunnable = null
         }
 
-        // OFFHOOK 상태 = 통화 연결됨
-        connectedTime = System.currentTimeMillis()
+        // OFFHOOK = 발신중 상태 (상대방 전화벨 울리는 중, 아직 받지 않음)
         isCallConnected = true
+        isReallyConnected = false
+        realConnectionTime = 0
 
         currentPhoneNumber?.let {
-            ApiClient.recordCall(it, "connected")
+            // calling: 전화 발신중 (상대방 전화벨 울리는 중)
+            ApiClient.recordCall(it, "calling")
         }
 
-        Log.d(TAG, "OFFHOOK 상태 (통화 연결됨): $currentPhoneNumber")
+        Log.d(TAG, "========================================")
+        Log.d(TAG, "OFFHOOK 상태 (발신중 - calling): $currentPhoneNumber")
+        Log.d(TAG, "상대방 전화벨 울리는 중...")
+        Log.d(TAG, "실제 통화 연결 감지를 시작합니다...")
+        Log.d(TAG, "========================================")
 
         // 통화 중 오디오 음소거 적용 (OFFHOOK 시 매번)
         applyCallAudioMute(context)
@@ -336,15 +546,99 @@ class PhoneStateReceiver : BroadcastReceiver() {
         // Context의 약한 참조 저장 (메모리 누수 방지)
         val contextRef = WeakReference(context)
 
-        // 설정된 시간 후 자동으로 전화 끊기
+        // 기본 전화 앱 여부 확인 및 InCallService 리스너 등록
+        checkAndRegisterInCallService(context)
+
+        // 실제 통화 연결 감지를 위한 AudioManager 체크 시작
+        // InCallService가 사용 가능하면 InCallService에서 정확하게 감지하지만,
+        // 백업으로 AudioManager도 함께 사용
+        startAudioModeCheck(context)
+
+        // noAnswerTimeout 후 자동으로 전화 끊기 (상대방이 받지 않는 경우)
+        // 이 시간 동안 AudioManager로 실제 연결 감지 시도
         disconnectRunnable = Runnable {
             contextRef.get()?.let { ctx ->
-                Log.d(TAG, "${connectedDisconnectDelay/1000}초 경과, 전화 종료 시도: $currentPhoneNumber")
-                wasDisconnectedByUs = true  // 우리가 끊었음을 표시
-                disconnectCall(ctx)
+                if (isReallyConnected) {
+                    // 실제 연결됨 - 이미 별도 타이머에서 처리됨
+                    Log.d(TAG, "실제 통화 연결됨 - 타이머 무시")
+                } else {
+                    // 실제 연결 안 됨 - 상대방이 받지 않음
+                    Log.d(TAG, "${noAnswerTimeout/1000}초 경과, 상대방 안 받음, 전화 종료: $currentPhoneNumber")
+                    wasDisconnectedByUs = true
+                    disconnectCall(ctx)
+                }
             }
         }
-        handler.postDelayed(disconnectRunnable!!, connectedDisconnectDelay)
+        handler.postDelayed(disconnectRunnable!!, noAnswerTimeout)
+    }
+
+    /**
+     * InCallService의 STATE_ACTIVE 상태를 주기적으로 체크하여 실제 통화 연결 감지
+     *
+     * 중요: AudioManager.MODE_IN_CALL은 부정확함 (OFFHOOK 되자마자 MODE_IN_CALL이 되는 기기가 많음)
+     * 따라서 InCallService의 STATE_ACTIVE만 사용하여 정확하게 감지
+     *
+     * 기본 전화 앱으로 설정되지 않은 경우:
+     * - connected 상태를 전송하지 않음
+     * - 통화 종료 시 CallLog로 판단
+     */
+    private fun startAudioModeCheck(context: Context) {
+        val contextRef = WeakReference(context)
+
+        audioCheckRunnable?.let {
+            handler.removeCallbacks(it)
+        }
+
+        audioCheckRunnable = object : Runnable {
+            override fun run() {
+                val ctx = contextRef.get() ?: return
+
+                if (!isCallConnected || isReallyConnected) {
+                    return // 이미 처리됨
+                }
+
+                // InCallService에서 ACTIVE 상태를 감지했는지 확인
+                if (MyInCallService.isCallActive) {
+                    if (!isReallyConnected) {
+                        isReallyConnected = true
+                        realConnectionTime = System.currentTimeMillis()
+                        connectedTime = realConnectionTime
+
+                        Log.d(TAG, "========================================")
+                        Log.d(TAG, "★★★ InCallService: 상대방이 전화를 받았습니다! ★★★")
+                        Log.d(TAG, "전화번호: $currentPhoneNumber")
+                        Log.d(TAG, "OFFHOOK 후 경과 시간: ${(realConnectionTime - offhookTime)/1000}초")
+                        Log.d(TAG, "${connectedDisconnectDelay/1000}초 후 자동 종료 예정")
+                        Log.d(TAG, "========================================")
+
+                        currentPhoneNumber?.let {
+                            ApiClient.recordCall(it, "connected")
+                        }
+
+                        // 기존 타이머 취소
+                        disconnectRunnable?.let {
+                            handler.removeCallbacks(it)
+                        }
+
+                        // 실제 연결 후 설정된 시간 후 자동 종료
+                        disconnectRunnable = Runnable {
+                            Log.d(TAG, "실제 통화 ${connectedDisconnectDelay/1000}초 경과, 전화 종료: $currentPhoneNumber")
+                            wasDisconnectedByUs = true
+                            contextRef.get()?.let { c -> disconnectCall(c) }
+                        }
+                        handler.postDelayed(disconnectRunnable!!, connectedDisconnectDelay)
+                    }
+                    return
+                }
+
+                // 아직 발신 중 - 500ms 후 다시 체크
+                // (InCallService가 STATE_ACTIVE를 감지할 때까지 계속 체크)
+                handler.postDelayed(this, 500)
+            }
+        }
+
+        // 첫 체크는 1초 후
+        handler.postDelayed(audioCheckRunnable!!, 1000)
     }
 
     /**
@@ -369,16 +663,27 @@ class PhoneStateReceiver : BroadcastReceiver() {
             noAnswerRunnable = null
         }
 
+        audioCheckRunnable?.let {
+            handler.removeCallbacks(it)
+            audioCheckRunnable = null
+        }
+
         // 통화 종료 상태 분석을 위한 정보 저장
         val phoneNumberForLog = currentPhoneNumber
         val appMeasuredDuration = if (offhookTime > 0) System.currentTimeMillis() - offhookTime else 0L
         val wasOffhookReached = offhookTime > 0
         val disconnectedByUs = wasDisconnectedByUs  // 우리가 끊었는지 여부 저장
+        val wasReallyConnected = isReallyConnected || MyInCallService.isCallActive  // InCallService 또는 AudioManager로 감지한 실제 연결 여부
+        val realDuration = if (realConnectionTime > 0) System.currentTimeMillis() - realConnectionTime else 0L
+        val usedInCallService = useInCallService  // InCallService 사용 여부
 
         Log.d(TAG, "========================================")
         Log.d(TAG, "통화 종료: $phoneNumberForLog")
         Log.d(TAG, "OFFHOOK 도달: $wasOffhookReached")
-        Log.d(TAG, "앱 측정 통화 시간: ${appMeasuredDuration}ms")
+        Log.d(TAG, "실제 연결 감지됨: $wasReallyConnected")
+        Log.d(TAG, "InCallService 사용: $usedInCallService")
+        Log.d(TAG, "앱 측정 통화 시간 (OFFHOOK~): ${appMeasuredDuration}ms")
+        Log.d(TAG, "앱 측정 실제 통화 시간: ${realDuration}ms")
         Log.d(TAG, "우리가 끊음: $disconnectedByUs")
         Log.d(TAG, "CallLog 분석 대기 중... (1초 후)")
         Log.d(TAG, "========================================")
@@ -392,7 +697,7 @@ class PhoneStateReceiver : BroadcastReceiver() {
         // CallLog 분석 후 상태 결정 (1초 후 - CallLog에 기록이 반영되는 시간 필요)
         phoneNumberForLog?.let { number ->
             handler.postDelayed({
-                analyzeAndDetermineCallStatus(context, number, appMeasuredDuration, wasOffhookReached, disconnectedByUs)
+                analyzeAndDetermineCallStatus(context, number, appMeasuredDuration, wasOffhookReached, disconnectedByUs, wasReallyConnected)
             }, 1000)
         } ?: run {
             // 전화번호가 없으면 바로 다음 전화 진행
@@ -406,12 +711,13 @@ class PhoneStateReceiver : BroadcastReceiver() {
      *
      * 판단 기준:
      * - wasOffhookReached: OFFHOOK 상태 도달 여부
+     * - wasReallyConnected: AudioManager로 감지한 실제 통화 연결 여부
      * - callLogDuration: CallLog에 기록된 통화 시간
      * - disconnectedByUs: 우리 타이머가 전화를 끊었는지 여부
      *
      * 로직:
      * 1. OFFHOOK 미도달 → rejected
-     * 2. CallLog > 0 → ended (실제 통화)
+     * 2. 실제 연결 감지됨 (AudioManager) 또는 CallLog > 0 → ended (실제 통화)
      * 3. CallLog = 0:
      *    - 우리가 끊음 → no_answer (상대방 안 받음)
      *    - 통신사가 끊음 → rejected (연결 실패)
@@ -421,7 +727,8 @@ class PhoneStateReceiver : BroadcastReceiver() {
         phoneNumber: String,
         appMeasuredDuration: Long,
         wasOffhookReached: Boolean,
-        disconnectedByUs: Boolean
+        disconnectedByUs: Boolean,
+        wasReallyConnected: Boolean
     ) {
         try {
             Log.d(TAG, "========================================")
@@ -444,6 +751,7 @@ class PhoneStateReceiver : BroadcastReceiver() {
                 Log.d(TAG, "  CallLog duration: ${callLogDuration}초")
                 Log.d(TAG, "  앱 측정 duration: ${appMeasuredDuration}ms (${appMeasuredDuration / 1000}초)")
                 Log.d(TAG, "  OFFHOOK 도달: $wasOffhookReached")
+                Log.d(TAG, "  실제 연결 감지 (AudioManager): $wasReallyConnected")
                 Log.d(TAG, "  우리가 끊음: $disconnectedByUs")
                 Log.d(TAG, "----------------------------------------")
 
@@ -453,6 +761,12 @@ class PhoneStateReceiver : BroadcastReceiver() {
                     !wasOffhookReached -> {
                         Log.d(TAG, "✗ 전화 연결 안 됨: $phoneNumber (OFFHOOK 도달 실패)")
                         "rejected"
+                    }
+                    // AudioManager로 실제 연결이 감지됨 = 상대방이 받음
+                    wasReallyConnected -> {
+                        Log.d(TAG, "✓ 정상 통화 종료: $phoneNumber")
+                        Log.d(TAG, "  → AudioManager로 실제 연결 감지됨, CallLog=${callLogDuration}초")
+                        "ended"
                     }
                     // CallLog duration > 0 = 실제 통화 발생
                     callLogDuration > 0 -> {
@@ -481,14 +795,15 @@ class PhoneStateReceiver : BroadcastReceiver() {
             } else {
                 Log.w(TAG, "CallLog에서 해당 번호의 통화 기록을 찾을 수 없음: $phoneNumber")
 
-                // CallLog가 없으면 disconnectedByUs로 판단
+                // CallLog가 없으면 AudioManager 감지 결과와 disconnectedByUs로 판단
                 status = when {
                     !wasOffhookReached -> "rejected"
+                    wasReallyConnected -> "ended"  // AudioManager로 연결 감지됨
                     disconnectedByUs -> "no_answer"
                     else -> "rejected"
                 }
 
-                Log.d(TAG, "판단 결과: $status")
+                Log.d(TAG, "판단 결과: $status (실제연결=$wasReallyConnected)")
             }
 
             Log.d(TAG, "========================================")
@@ -511,56 +826,6 @@ class PhoneStateReceiver : BroadcastReceiver() {
 
         // 다음 전화 걸기 콜백 호출
         callEndedListener?.onCallEnded()
-    }
-
-    /**
-     * 전화 자동 끊기
-     * 주의: Android 9+ 에서는 기본 전화 앱이 아니면 endCall()이 작동하지 않음
-     */
-    private fun disconnectCall(context: Context) {
-        try {
-            // Android 9 (API 28) 이상
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
-                if (telecomManager != null &&
-                    ActivityCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.ANSWER_PHONE_CALLS
-                    ) == PackageManager.PERMISSION_GRANTED
-                ) {
-                    val success = telecomManager.endCall()
-                    if (success) {
-                        Log.d(TAG, "TelecomManager를 사용하여 전화 종료 성공: $currentPhoneNumber")
-                    } else {
-                        Log.w(TAG, "TelecomManager.endCall() 실패 - 기본 전화 앱이 아닐 수 있음")
-                    }
-                    return
-                } else {
-                    Log.w(TAG, "ANSWER_PHONE_CALLS 권한 없음")
-                }
-            }
-
-            // Android 8.1 이하에서 Reflection 시도 (deprecated, 작동 안 할 수 있음)
-            val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-            if (telephonyManager != null) {
-                try {
-                    val telephonyClass = Class.forName(telephonyManager.javaClass.name)
-                    val endCallMethod = telephonyClass.getDeclaredMethod("endCall")
-                    endCallMethod.isAccessible = true
-                    endCallMethod.invoke(telephonyManager)
-                    Log.d(TAG, "Reflection을 사용하여 전화 종료: $currentPhoneNumber")
-                } catch (e: NoSuchMethodException) {
-                    Log.w(TAG, "endCall 메서드를 찾을 수 없음 (Android 버전에서 지원 안 함)")
-                } catch (e: SecurityException) {
-                    Log.w(TAG, "전화 끊기 권한 거부됨")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "전화 끊기 실패: ${e.message}", e)
-        }
-
-        // 모든 시도가 실패했을 때의 로그
-        Log.w(TAG, "자동 전화 종료 실패. 사용자가 수동으로 종료해야 할 수 있음.")
     }
 
     /**
@@ -627,11 +892,23 @@ class PhoneStateReceiver : BroadcastReceiver() {
      */
     private fun resetState() {
         isCallConnected = false
+        isReallyConnected = false
         callStartTime = 0
         offhookTime = 0
         connectedTime = 0
+        realConnectionTime = 0
         currentPhoneNumber = null
         wasDisconnectedByUs = false
+
+        // 오디오 체크 타이머 정리
+        audioCheckRunnable?.let {
+            handler.removeCallbacks(it)
+            audioCheckRunnable = null
+        }
+
+        // InCallService 상태 초기화
+        MyInCallService.reset()
+
         // 오디오 관련 상태는 여기서 초기화하지 않음 (시작/중지 시에만 처리)
     }
 }

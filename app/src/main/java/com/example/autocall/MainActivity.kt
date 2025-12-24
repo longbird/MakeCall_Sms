@@ -1,6 +1,7 @@
 package com.example.autocall
 
 import android.Manifest
+import android.app.role.RoleManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -14,6 +15,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.telecom.TelecomManager
 import android.util.Log
 import android.widget.Button
 import android.widget.CheckBox
@@ -21,6 +23,7 @@ import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -34,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val PERMISSION_REQUEST_CODE = 100
+        private const val REQUEST_CODE_SET_DEFAULT_DIALER = 101
         const val ACTION_SMS_RECEIVED = "com.example.autocall.SMS_RECEIVED"
 
         // SharedPreferences 관련 상수
@@ -46,19 +50,17 @@ class MainActivity : AppCompatActivity() {
         var isMicMuted = true
     }
 
-    private lateinit var etPhoneNumber: EditText
     private lateinit var etServerAddress: EditText
     private lateinit var etCallTimeout: EditText
     private lateinit var etCallDuration: EditText
     private lateinit var etPhoneNumberLimit: EditText
     private lateinit var etEndTime: EditText
     private lateinit var btnStart: Button
-    private lateinit var btnMakeCall: Button
-    private lateinit var btnViewHistory: Button
     private lateinit var btnCheckPermissions: Button
     private lateinit var btnTestSms: Button
     private lateinit var cbMuteSpeaker: CheckBox
     private lateinit var cbMuteMic: CheckBox
+    private lateinit var btnSetDefaultDialer: Button
     private lateinit var recyclerView: RecyclerView
     private lateinit var adapter: SmsHistoryAdapter
     private lateinit var dbHelper: DatabaseHelper
@@ -140,6 +142,20 @@ class MainActivity : AppCompatActivity() {
     private var totalPhoneNumbersProcessed = 0 // 현재까지 처리한 전화번호 개수
     private var currentBatchSize = 0 // 현재 배치의 전화번호 개수
 
+    // 기본 전화 앱 설정을 위한 ActivityResultLauncher (Android 10+)
+    private val defaultDialerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (isDefaultDialer()) {
+            Log.d(TAG, "기본 전화 앱으로 설정 성공!")
+            Toast.makeText(this, "기본 전화 앱으로 설정되었습니다.\n이제 정확한 통화 상태 감지가 가능합니다.", Toast.LENGTH_LONG).show()
+            updateDefaultDialerButton()
+        } else {
+            Log.w(TAG, "기본 전화 앱 설정 취소됨")
+            Toast.makeText(this, "기본 전화 앱 설정이 취소되었습니다.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -148,7 +164,6 @@ class MainActivity : AppCompatActivity() {
         dbHelper = DatabaseHelper(this)
 
         // UI 컴포넌트 초기화
-        etPhoneNumber = findViewById(R.id.etPhoneNumber)
         etServerAddress = findViewById(R.id.etServerAddress)
         etCallTimeout = findViewById(R.id.etCallTimeout)
         etCallDuration = findViewById(R.id.etCallDuration)
@@ -160,12 +175,11 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "서버 주소 로드: $savedServerAddress")
         // 기본 타이머, 전화번호 개수, 종료 시간 설정 (이미 XML에서 설정되어 있음)
         btnStart = findViewById(R.id.btnStart)
-        btnMakeCall = findViewById(R.id.btnMakeCall)
-        btnViewHistory = findViewById(R.id.btnViewHistory)
         btnCheckPermissions = findViewById(R.id.btnCheckPermissions)
         btnTestSms = findViewById(R.id.btnTestSms)
         cbMuteSpeaker = findViewById(R.id.cbMuteSpeaker)
         cbMuteMic = findViewById(R.id.cbMuteMic)
+        btnSetDefaultDialer = findViewById(R.id.btnSetDefaultDialer)
         recyclerView = findViewById(R.id.recyclerView)
 
         // 체크박스 리스너 설정 - 상태 변경 시 companion object 변수 업데이트
@@ -221,21 +235,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 전화 걸기 버튼 클릭 이벤트
-        btnMakeCall.setOnClickListener {
-            val phoneNumber = etPhoneNumber.text.toString().trim()
-            if (phoneNumber.isNotEmpty()) {
-                makePhoneCall(phoneNumber)
-            } else {
-                Toast.makeText(this, "전화번호를 입력하세요", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        // SMS 이력 새로고침 버튼
-        btnViewHistory.setOnClickListener {
-            loadSmsHistory()
-        }
-
         // 권한 상태 확인 버튼
         btnCheckPermissions.setOnClickListener {
             checkPermissionStatus()
@@ -245,6 +244,14 @@ class MainActivity : AppCompatActivity() {
         btnTestSms.setOnClickListener {
             testSmsReceiver()
         }
+
+        // 기본 전화 앱 설정 버튼
+        btnSetDefaultDialer.setOnClickListener {
+            requestDefaultDialer()
+        }
+
+        // 기본 전화 앱 상태 확인 및 버튼 업데이트
+        updateDefaultDialerButton()
 
         // 앱 시작시 SMS 이력 로드
         loadSmsHistory()
@@ -390,7 +397,7 @@ class MainActivity : AppCompatActivity() {
 
         // 타이머 및 설정값 읽기
         val callTimeout = etCallTimeout.text.toString().toIntOrNull() ?: 30
-        val callDuration = etCallDuration.text.toString().toIntOrNull() ?: 20
+        val callDuration = etCallDuration.text.toString().toIntOrNull() ?: 5
         val phoneNumberLimit = etPhoneNumberLimit.text.toString().toIntOrNull() ?: 10
         val endTime = etEndTime.text.toString().trim()
 
@@ -661,7 +668,6 @@ class MainActivity : AppCompatActivity() {
         val nextPhoneNumber = phoneNumberQueue.poll()
         if (!nextPhoneNumber.isNullOrEmpty()) {
             totalPhoneNumbersProcessed++
-            etPhoneNumber.setText(nextPhoneNumber)
 
             // 진행 상황 업데이트
             updateStatus(
@@ -713,6 +719,40 @@ class MainActivity : AppCompatActivity() {
                 PERMISSION_REQUEST_CODE
             )
         }
+
+        // "다른 앱 위에 표시" 권한 확인 및 요청 (백그라운드에서 전화 걸기용)
+        checkOverlayPermission()
+    }
+
+    /**
+     * "다른 앱 위에 표시" 권한 확인 및 요청
+     * 이 권한이 있으면 백그라운드에서도 Activity를 시작할 수 있음
+     */
+    private fun checkOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!android.provider.Settings.canDrawOverlays(this)) {
+                Log.w(TAG, "SYSTEM_ALERT_WINDOW 권한 없음 - 설정 화면으로 이동 필요")
+                AlertDialog.Builder(this)
+                    .setTitle("권한 필요")
+                    .setMessage("백그라운드에서 자동 전화를 걸기 위해 '다른 앱 위에 표시' 권한이 필요합니다.\n\n설정 화면에서 권한을 허용해주세요.")
+                    .setPositiveButton("설정으로 이동") { _, _ ->
+                        try {
+                            val intent = Intent(
+                                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:$packageName")
+                            )
+                            startActivity(intent)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "설정 화면 열기 실패: ${e.message}", e)
+                            Toast.makeText(this, "설정 화면을 열 수 없습니다", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .setNegativeButton("나중에", null)
+                    .show()
+            } else {
+                Log.d(TAG, "SYSTEM_ALERT_WINDOW 권한 허용됨")
+            }
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -741,7 +781,7 @@ class MainActivity : AppCompatActivity() {
 
             // 타이머 설정값 읽기
             val callTimeout = etCallTimeout.text.toString().toIntOrNull() ?: 30
-            val callDuration = etCallDuration.text.toString().toIntOrNull() ?: 20
+            val callDuration = etCallDuration.text.toString().toIntOrNull() ?: 5
 
             Log.d(TAG, "========================================")
             Log.d(TAG, "전화 걸기 설정:")
@@ -756,8 +796,8 @@ class MainActivity : AppCompatActivity() {
             PhoneStateReceiver.setCurrentPhoneNumber(phoneNumber)
             PhoneStateReceiver.setCallTimeouts(callTimeout, callDuration)
 
-            // 전화 걸기 시작 상태 기록
-            ApiClient.recordCall(phoneNumber, "started")
+            // 전화 걸기 시작 상태 기록 (dial: 전화 걸기 시작)
+            ApiClient.recordCall(phoneNumber, "dial")
 
             try {
                 val callIntent = Intent(Intent.ACTION_CALL)
@@ -796,12 +836,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             Log.d(TAG, "SMS 기록 화면 갱신 완료 - 총 ${records.size}개")
         }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // 앱이 다시 활성화될 때 SMS 이력 새로고침
-        loadSmsHistory()
     }
 
     /**
@@ -1095,5 +1129,118 @@ class MainActivity : AppCompatActivity() {
     private fun loadServerAddress(): String {
         val prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         return prefs.getString(KEY_SERVER_ADDRESS, DEFAULT_SERVER_ADDRESS) ?: DEFAULT_SERVER_ADDRESS
+    }
+
+    /**
+     * 현재 앱이 기본 전화 앱인지 확인
+     */
+    private fun isDefaultDialer(): Boolean {
+        val telecomManager = getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+        return telecomManager?.defaultDialerPackage == packageName
+    }
+
+    /**
+     * 기본 전화 앱으로 설정 요청
+     */
+    private fun requestDefaultDialer() {
+        if (isDefaultDialer()) {
+            Toast.makeText(this, "이미 기본 전화 앱으로 설정되어 있습니다.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // 사용자에게 설명 다이얼로그 표시
+        AlertDialog.Builder(this)
+            .setTitle("기본 전화 앱 설정")
+            .setMessage(
+                "정확한 통화 상태 감지를 위해 이 앱을 기본 전화 앱으로 설정해야 합니다.\n\n" +
+                "이 설정을 하면:\n" +
+                "• 상대방이 전화를 받았을 때 정확하게 감지됩니다\n" +
+                "• 통화 종료 원인을 정확하게 파악할 수 있습니다\n\n" +
+                "※ 기존 전화 앱의 기능은 그대로 사용할 수 있습니다."
+            )
+            .setPositiveButton("설정하기") { _, _ ->
+                launchDefaultDialerRequest()
+            }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    /**
+     * 기본 전화 앱 설정 화면 실행
+     */
+    private fun launchDefaultDialerRequest() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10 이상: RoleManager 사용
+                val roleManager = getSystemService(Context.ROLE_SERVICE) as? RoleManager
+                if (roleManager != null && roleManager.isRoleAvailable(RoleManager.ROLE_DIALER)) {
+                    if (!roleManager.isRoleHeld(RoleManager.ROLE_DIALER)) {
+                        val intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER)
+                        defaultDialerLauncher.launch(intent)
+                        Log.d(TAG, "RoleManager로 기본 전화 앱 요청")
+                    } else {
+                        Toast.makeText(this, "이미 기본 전화 앱입니다.", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    // RoleManager 사용 불가 시 TelecomManager 사용
+                    launchDefaultDialerWithTelecom()
+                }
+            } else {
+                // Android 9 이하: TelecomManager 사용
+                launchDefaultDialerWithTelecom()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "기본 전화 앱 설정 요청 실패: ${e.message}", e)
+            Toast.makeText(this, "기본 전화 앱 설정을 열 수 없습니다: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * TelecomManager를 사용하여 기본 전화 앱 설정
+     */
+    private fun launchDefaultDialerWithTelecom() {
+        try {
+            val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER)
+            intent.putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, packageName)
+            defaultDialerLauncher.launch(intent)
+            Log.d(TAG, "TelecomManager로 기본 전화 앱 요청")
+        } catch (e: Exception) {
+            Log.e(TAG, "TelecomManager 기본 전화 앱 요청 실패: ${e.message}", e)
+            // 최후의 수단: 설정 화면으로 이동
+            try {
+                val intent = Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
+                startActivity(intent)
+                Toast.makeText(this, "'전화 앱'에서 이 앱을 선택해주세요.", Toast.LENGTH_LONG).show()
+            } catch (e2: Exception) {
+                Toast.makeText(this, "설정 화면을 열 수 없습니다.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * 기본 전화 앱 버튼 상태 업데이트
+     */
+    private fun updateDefaultDialerButton() {
+        runOnUiThread {
+            if (isDefaultDialer()) {
+                btnSetDefaultDialer.text = "✓ 기본 전화 앱 (설정됨)"
+                btnSetDefaultDialer.isEnabled = false
+                btnSetDefaultDialer.backgroundTintList =
+                    android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#888888"))
+            } else {
+                btnSetDefaultDialer.text = "기본 전화 앱으로 설정"
+                btnSetDefaultDialer.isEnabled = true
+                btnSetDefaultDialer.backgroundTintList =
+                    android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#FF9800"))
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 앱이 다시 활성화될 때 SMS 이력 새로고침
+        loadSmsHistory()
+        // 기본 전화 앱 상태 업데이트
+        updateDefaultDialerButton()
     }
 }

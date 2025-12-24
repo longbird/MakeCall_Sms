@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#1A1A1A"
+    android:padding="24dp">
+
+    <!-- 전화번호 -->
+    <TextView
+        android:id="@+id/tvPhoneNumber"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="010-0000-0000"
+        android:textSize="28sp"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 통화 상태 -->
+    <TextView
+        android:id="@+id/tvCallState"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="발신 중..."
+        android:textSize="18sp"
+        android:textColor="#AAAAAA"
+        android:layout_marginBottom="8dp" />
+
+    <!-- 경과 시간 -->
+    <TextView
+        android:id="@+id/tvCallDuration"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="발신 00:00"
+        android:textSize="20sp"
+        android:textColor="#FF9800"
+        android:textStyle="bold"
+        android:layout_marginBottom="48dp" />
+
+    <!-- 버튼들 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="24dp">
+
+        <Button
+            android:id="@+id/btnMute"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:text="음소거"
+            android:textSize="12sp"
+            android:backgroundTint="#444444"
+            android:layout_marginEnd="16dp" />
+
+        <Button
+            android:id="@+id/btnSpeaker"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:text="스피커"
+            android:textSize="12sp"
+            android:backgroundTint="#444444"
+            android:layout_marginStart="16dp" />
+
+    </LinearLayout>
+
+    <!-- 통화 종료 버튼 -->
+    <Button
+        android:id="@+id/btnEndCall"
+        android:layout_width="100dp"
+        android:layout_height="100dp"
+        android:text="종료"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:backgroundTint="#F44336" />
+
+    <!-- 안내 메시지 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="AutoCall 앱에서 관리 중"
+        android:textSize="12sp"
+        android:textColor="#666666"
+        android:layout_marginTop="48dp" />
+
+</LinearLayout>

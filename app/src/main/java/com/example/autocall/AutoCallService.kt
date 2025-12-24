@@ -70,7 +70,7 @@ class AutoCallService : Service() {
     // 설정값
     private var serverAddress: String = ""
     private var callTimeout: Int = 30
-    private var callDuration: Int = 20
+    private var callDuration: Int = 5
     private var phoneNumberLimit: Int = 10
     private var endTimeStr: String = "18:00"
 
@@ -111,7 +111,7 @@ class AutoCallService : Service() {
                 // 설정값 읽기
                 serverAddress = intent.getStringExtra(EXTRA_SERVER_ADDRESS) ?: ""
                 callTimeout = intent.getIntExtra(EXTRA_CALL_TIMEOUT, 30)
-                callDuration = intent.getIntExtra(EXTRA_CALL_DURATION, 20)
+                callDuration = intent.getIntExtra(EXTRA_CALL_DURATION, 5)
                 phoneNumberLimit = intent.getIntExtra(EXTRA_PHONE_NUMBER_LIMIT, 10)
                 endTimeStr = intent.getStringExtra(EXTRA_END_TIME) ?: "18:00"
                 MainActivity.isSpeakerMuted = intent.getBooleanExtra(EXTRA_MUTE_SPEAKER, true)
@@ -373,14 +373,24 @@ class AutoCallService : Service() {
             totalPhoneNumbersProcessed++
             currentPhoneNumber = nextPhoneNumber
 
-            updateNotification("전화 걸기: $nextPhoneNumber", totalPhoneNumbersProcessed, currentBatchSize)
-            notifyStatusChanged("전화 걸기", totalPhoneNumbersProcessed, currentBatchSize, nextPhoneNumber)
+            updateNotification("전화 준비: $nextPhoneNumber", totalPhoneNumbersProcessed, currentBatchSize)
+            notifyStatusChanged("전화 준비", totalPhoneNumbersProcessed, currentBatchSize, nextPhoneNumber)
 
-            makePhoneCall(nextPhoneNumber)
+            // 전화 걸기 전 2초 딜레이 (이전 통화 완전 종료 대기)
+            handler.postDelayed({
+                if (isAutoCalling) {
+                    updateNotification("전화 걸기: $nextPhoneNumber", totalPhoneNumbersProcessed, currentBatchSize)
+                    notifyStatusChanged("전화 걸기", totalPhoneNumbersProcessed, currentBatchSize, nextPhoneNumber)
+                    makePhoneCall(nextPhoneNumber)
+                }
+            }, 2000)
         } else {
             processNextPhoneCall()
         }
     }
+
+    // 전화 시작 확인을 위한 Runnable
+    private var callStartCheckRunnable: Runnable? = null
 
     /**
      * 전화 걸기
@@ -389,11 +399,13 @@ class AutoCallService : Service() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE)
             != PackageManager.PERMISSION_GRANTED) {
             Log.e(TAG, "CALL_PHONE 권한 없음")
-            processNextPhoneCall()
+            handler.postDelayed({ processNextPhoneCall() }, 1000)
             return
         }
 
+        Log.d(TAG, "========================================")
         Log.d(TAG, "전화 걸기: $phoneNumber (${totalPhoneNumbersProcessed}/${currentBatchSize})")
+        Log.d(TAG, "========================================")
 
         // 전화번호 저장
         CallManager.setLastCalledNumber(phoneNumber)
@@ -402,21 +414,79 @@ class AutoCallService : Service() {
         PhoneStateReceiver.setCurrentPhoneNumber(phoneNumber)
         PhoneStateReceiver.setCallTimeouts(callTimeout, callDuration)
 
-        // 전화 걸기 시작 상태 기록
-        ApiClient.recordCall(phoneNumber, "started")
+        // 전화 걸기 시작 상태 기록 (dial: 전화 걸기 시작)
+        ApiClient.recordCall(phoneNumber, "dial")
 
         try {
-            val callIntent = Intent(Intent.ACTION_CALL).apply {
-                data = Uri.parse("tel:$phoneNumber")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            // Overlay 권한이 있으면 앱을 포그라운드로 가져와서 BAL 제한 우회
+            val hasOverlayPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                android.provider.Settings.canDrawOverlays(this)
+            } else {
+                true
             }
-            startActivity(callIntent)
+
+            if (hasOverlayPermission) {
+                // 앱을 포그라운드로 가져오기 (Background Activity Launch 제한 우회)
+                bringAppToForeground()
+                Log.d(TAG, "Overlay 권한 있음 - 앱을 포그라운드로 가져옴")
+            } else {
+                Log.w(TAG, "Overlay 권한 없음 - 직접 전화 인텐트 시도")
+            }
+
+            // 딜레이 후 전화 걸기 (앱이 포그라운드로 오는 시간 확보)
+            val delay = if (hasOverlayPermission) 500L else 100L
+            handler.postDelayed({
+                try {
+                    val callIntent = Intent(Intent.ACTION_CALL).apply {
+                        data = Uri.parse("tel:$phoneNumber")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_NO_USER_ACTION
+                    }
+                    startActivity(callIntent)
+                    Log.d(TAG, "전화 인텐트 전송 완료: $phoneNumber")
+
+                    // 5초 후에도 OFFHOOK 상태가 되지 않으면 확인
+                    callStartCheckRunnable?.let { handler.removeCallbacks(it) }
+                    callStartCheckRunnable = Runnable {
+                        val callStarted = CallManager.getLastCalledNumber() == phoneNumber
+                        if (callStarted) {
+                            Log.d(TAG, "전화 인텐트 전송됨, PhoneStateReceiver에서 상태 모니터링 중: $phoneNumber")
+                        } else {
+                            Log.w(TAG, "전화 인텐트 전송했지만 CallManager에 번호 없음: $phoneNumber")
+                        }
+                    }
+                    handler.postDelayed(callStartCheckRunnable!!, 5000)
+                } catch (e: Exception) {
+                    Log.e(TAG, "전화 걸기 실패 (딜레이 후): ${e.message}", e)
+                    ApiClient.recordCall(phoneNumber, "failed")
+                    handler.postDelayed({ processNextPhoneCall() }, 2000)
+                }
+            }, delay)
+
         } catch (e: Exception) {
             Log.e(TAG, "전화 걸기 실패: ${e.message}", e)
             ApiClient.recordCall(phoneNumber, "failed")
             handler.postDelayed({
                 processNextPhoneCall()
-            }, 1000)
+            }, 2000)
+        }
+    }
+
+    /**
+     * 앱을 포그라운드로 가져오기
+     * Background Activity Launch 제한을 우회하기 위해 MainActivity를 띄움
+     */
+    private fun bringAppToForeground() {
+        try {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION
+            }
+            startActivity(intent)
+            Log.d(TAG, "앱을 포그라운드로 가져옴")
+        } catch (e: Exception) {
+            Log.e(TAG, "앱 포그라운드로 가져오기 실패: ${e.message}", e)
         }
     }
 
@@ -434,6 +504,12 @@ class AutoCallService : Service() {
         endTimeCheckRunnable?.let {
             handler.removeCallbacks(it)
             endTimeCheckRunnable = null
+        }
+
+        // 전화 시작 체크 중단
+        callStartCheckRunnable?.let {
+            handler.removeCallbacks(it)
+            callStartCheckRunnable = null
         }
 
         // 남은 전화번호 리셋
@@ -498,6 +574,10 @@ class AutoCallService : Service() {
         isRunning = false
 
         endTimeCheckRunnable?.let {
+            handler.removeCallbacks(it)
+        }
+
+        callStartCheckRunnable?.let {
             handler.removeCallbacks(it)
         }
 

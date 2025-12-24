@@ -72,7 +72,7 @@
                 android:layout_height="wrap_content"
                 android:inputType="number"
                 android:maxLines="1"
-                android:text="10" />
+                android:text="5" />
         </com.google.android.material.textfield.TextInputLayout>
     </LinearLayout>
 
@@ -218,46 +218,6 @@
 
     </com.google.android.material.card.MaterialCardView>
 
-    <com.google.android.material.textfield.TextInputLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"
-        android:hint="@string/phone_number_hint"
-        app:boxBackgroundMode="outline">
-
-        <com.google.android.material.textfield.TextInputEditText
-            android:id="@+id/etPhoneNumber"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="phone"
-            android:maxLines="1" />
-    </com.google.android.material.textfield.TextInputLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="8dp">
-
-        <Button
-            android:id="@+id/btnMakeCall"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="8dp"
-            android:text="@string/make_call"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/btnViewHistory"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:text="@string/view_history"
-            android:textSize="16sp" />
-    </LinearLayout>
-
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -284,6 +244,16 @@
             android:textSize="14sp"
             android:backgroundTint="#2196F3" />
     </LinearLayout>
+
+    <!-- 기본 전화 앱 설정 버튼 -->
+    <Button
+        android:id="@+id/btnSetDefaultDialer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:text="기본 전화 앱으로 설정"
+        android:textSize="14sp"
+        android:backgroundTint="#FF9800" />
 
     <TextView
         android:layout_width="match_parent"
